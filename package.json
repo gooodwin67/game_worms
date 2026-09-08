@@ -1,0 +1,26 @@
+{
+  "name": "game-three-template",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 8080"
+  },
+  "dependencies": {
+    "@yandex-games/sdk-dev-proxy": "^0.0.1",
+    "autoprefixer": "^10.4.21",
+    "gh-pages": "^6.3.0",
+    "gsap": "^3.14.1",
+    "three": "^0.185.1",
+    "@dimforge/rapier2d-compat": "^0.20.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-legacy": "^7.2.1",
+    "vite": "^7.0.6",
+    "vite-plugin-top-level-await": "^1.6.0",
+    "vite-plugin-wasm": "^3.5.0"
+  }
+}
+
