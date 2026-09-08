@@ -530,8 +530,8 @@ export class Game {
   }
 
   createExplosion(x, y, radius) { this.terrain.createExplosion(x, y, radius); for (const w of this.worms) if (w.alive) w.body.wakeUp(); }
-  damage(w, amount) {
-    if (w.frozen && amount < 100) return;
+  damage(w, amount, force = false) {
+    if (!w.alive || (w.frozen && !force)) return;
     w.hp = Math.max(0, w.hp - amount);
     w.health.value = w.hp;
     w.health.title = `${w.hp} HP`;
@@ -556,7 +556,7 @@ export class Game {
     this.particles.update(this.time);
     if (!this.winner) { this.turn.update(dt); this.bot.update(dt); }
 
-    if (this.humanInput() && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.movementMode)) {
+    if (this.humanInput() && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
       const w = this.active,
         direction = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
       const jump = this.keys.delete('KeyW');
@@ -596,7 +596,7 @@ export class Game {
       if (normalSpeed > .3) continue;
 
       const tangentSpeed = velocity.x * ny - velocity.y * nx;
-      let tangentDelta = GRAVITY * nx * dt;
+      let tangentDelta = this.world.gravity.y * nx * dt;
       const moving = w === this.active && this.humanInput() &&
         (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.movementMode) &&
         (this.keys.has('KeyA') || this.keys.has('KeyD') || this.keys.has('ArrowLeft') || this.keys.has('ArrowRight'));
@@ -616,6 +616,11 @@ export class Game {
       this.motion.y = -nx * tangentDelta * w.body.mass();
       w.body.applyImpulse(this.motion, false);
     }
+    if (this.humanInput() && (this.weapons.burst || this.weapons.flame)) {
+      if (this.keys.has('ArrowUp')) this.angle += dt;
+      if (this.keys.has('ArrowDown')) this.angle -= dt;
+    }
+    this.weapons.updateMovement(dt);
     this.world.step(this.events);
     this.weapons.update(dt);
     this.syncWorms();
@@ -626,8 +631,8 @@ export class Game {
       const wasGrounded = w.grounded, fallSpeed = w.vy;
       const p = w.body.translation(), v = w.body.linvel();
       w.x = p.x; w.y = p.y; w.vx = v.x; w.vy = v.y;
-      if (w.y < -3 || w.x < -3 || w.x > MAP.width + 3) { this.damage(w, 100); continue; }
-      if (this.waterLevel > 0 && w.y < this.waterLevel) { this.damage(w, 100); continue; }
+      if (w.y < -3 || w.x < -3 || w.x > MAP.width + 3) { this.damage(w, w.hp, true); continue; }
+      if (this.waterLevel > 0 && w.y < this.waterLevel) { this.damage(w, w.hp, true); continue; }
       if (w.body.isSleeping()) continue;
 
       w.grounded = false; w.groundNormalX = 0; w.groundNormalY = 1;
@@ -795,11 +800,17 @@ export class Game {
   bindInput() {
     window.addEventListener('keydown', e => {
       if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName) || !this.humanInput()) return;
-      if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
+      if (['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
       if (e.code === 'Space') { if (!this.weapons.remote()) this.turn.beginCharge(); }
-      if (/Digit[1-5]/.test(e.code) && this.turn.state === TURN.WAITING_INPUT) this.weapons.fuse = Number(e.code.slice(-1));
+      if (e.code === 'Enter') this.weapons.dropWeapon();
+      if (/Digit[1-5]/.test(e.code) && this.turn.state === TURN.WAITING_INPUT) {
+        if (this.turn.weapon === 'madCows') this.weapons.cowCount = Number(e.code.slice(-1));
+        else this.weapons.fuse = Number(e.code.slice(-1));
+      }
+      if (e.code === 'Equal' || e.code === 'NumpadAdd') this.weapons.bounce = .7;
+      if (e.code === 'Minus' || e.code === 'NumpadSubtract') this.weapons.bounce = .2;
     });
     window.addEventListener('keyup', e => {
       this.keys.delete(e.code);
@@ -829,7 +840,7 @@ export class Game {
           const rect = this.canvas.getBoundingClientRect();
           this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
           this.weapons.setTarget(this.vector.x, this.vector.y);
-          if (this.turn.weapon === 'homing') return;
+          if (['homing', 'pigeon', 'magicBullet'].includes(this.turn.weapon)) return;
         }
         this.turn.beginCharge();
       }
@@ -937,7 +948,7 @@ export class Game {
     this.chargeBar = this.matchHud.querySelector('.charge');
 
     this.matchHud.querySelectorAll('[data-weapon]').forEach(button => button.addEventListener('click', () => {
-      if (this.humanInput() && this.turn.state === TURN.WAITING_INPUT && this.turn.shots === 2) {
+      if (this.humanInput() && this.turn.state === TURN.WAITING_INPUT && !this.turn.lockedWeapon) {
         this.turn.weapon = button.dataset.weapon;
         this.weapons.resetTarget();
       }
@@ -962,15 +973,15 @@ export class Game {
   updateHUD() {
     const t = this.turn;
     const text = this.winner || `${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${t.state} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : t.weapon}`;
-    const hints = { homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель для голубя', magicBullet: 'ЛКМ — выбрать цель волшебной пули', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'ЛКМ на карте — выбрать эпицентр испытания', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: 'ЛКМ на карте — выбрать точку стада', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'ЛКМ на карте — выбрать центр метеоритного дождя', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'ЛКМ — выбрать точку для верёвки', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить; ещё раз — взорвать супер-овцу', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Стрелки/WASD — летать; ранец работает 30 секунд', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
-    const hint = this.weapons.message || hints[t.weapon] || 'Удерживайте пробел / ЛКМ для силы выстрела';
+    const hints = { girder: 'Прицел — угол; ЛКМ — поставить в свободном месте', girderPack: 'ЛКМ — поставить балку; за ход можно поставить пять', mbBomb: 'ЛКМ — сбросить бомбу сверху', holy: 'Удерживайте пробел — сила броска; взрыв после 3 секунд и остановки', moleBomb: 'Пробел — выпустить, затем начать бурение, затем взорвать', skunk: 'Пробел — выпустить; ещё раз — выпустить газ', salvation: 'Пробел — выпустить; ещё раз — взорвать', superBanana: 'Пробел — бросить; затем разделить; затем взорвать осколки', homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель; пробел — выпустить голубя', magicBullet: 'ЛКМ — выбрать цель; пробел — выпустить волшебную пулю', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'Пробел — поднять воду и заразить незамороженных бойцов', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: '1–5 — размер стада; пробел — выпустить в выбранном направлении', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'Пробел — метеоритный дождь по всей карте', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'Прицел + пробел — зацепиться; A/D — качаться; W/S — длина; пробел — отпустить', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить, затем взлететь, затем взорвать; A/D или ←/→ — поворот', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Пробел — включить/снять; W/↑ — тяга вверх, A/D — в стороны; Enter — сбросить оружие', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
+    const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте пробел / ЛКМ для силы выстрела' : 'Пробел / ЛКМ — применить оружие');
     if (this.weaponHint.textContent !== hint) this.weaponHint.textContent = hint;
     if (this.status.textContent !== text) this.status.textContent = text;
     this.chargeBar.value = t.charge;
 
     for (const button of this.weaponButtons) {
       button.classList.toggle('selected', button.dataset.weapon === t.weapon);
-      button.disabled = !this.humanInput() || t.state !== TURN.WAITING_INPUT || t.shots < 2;
+      button.disabled = !this.humanInput() || t.state !== TURN.WAITING_INPUT || !!t.lockedWeapon;
     }
 
     for (const w of this.worms) if (w.alive) {
