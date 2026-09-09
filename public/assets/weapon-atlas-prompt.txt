@@ -1,0 +1,16 @@
+Create a single production game sprite atlas / collage, exactly 5 columns by 14 rows, all cells equal, canvas 1000 by 2800 pixels (aspect 5:14). NO margins, NO gutters, NO lines, NO labels, NO text. Pure black background. Each icon centered in its cell, fully contained within central 75% with ample black padding. 1990s cartoon artillery-game inventory style: chunky colorful hand-painted pixel-art sprites, strong silhouettes, shaded highlights, playful proportions. Similar visual language to classic Worms weapon menus but ORIGINAL drawings, altered shapes and colors, no traced sprites. All 70 cells, row-major order below, exactly one icon per cell. Final four cells stay empty black.
+Row 1: olive bazooka red rocket tip; blue guided missile; stubby gray mortar launcher; white carrier pigeon with purple satchel; sheep in yellow launching tube.
+Row 2: downward drill bit; green hand grenade; red cluster grenade; curved yellow banana; double-headed battle axe.
+Row 3: cracked earth landscape; silver shotgun; blue handgun; compact gray Uzi; green rotary minigun.
+Row 4: wooden bow and arrow; flaming boxing fist; blue energy ball with fist; cartoon helmeted worm with red headband charging; inflated cartoon worm with explosive belt.
+Row 5: pink poking finger; red dynamite stick; green disc mine red cap; fluffy white sheep; flying sheep with blue cape.
+Row 6: brown mole with explosives; three falling rockets; orange napalm flames; flying envelopes; three falling green mines.
+Row 7: four parachuting moles; yellow blowtorch; vertical pneumatic jackhammer; single diagonal steel girder; blue baseball bat.
+Row 8: bundle of steel girders; coil of orange ninja rope with hook; bungee cord with harness; lavender parachute; blue teleport remote yellow antenna.
+Row 9: golden balance scales; bunch of three bananas; golden holy grenade silver cross; orange flamethrower; elderly charity lady with tambourine.
+Row 10: stout cartoon man bomb; flaming petrol bottle; black and white skunk; ornate orange ceramic vase; burning airborne sheep.
+Row 11: rolled red flying carpets; angry brown cow; old woman with walking stick; gray concrete donkey; nuclear mushroom cloud.
+Row 12: multiple falling flaming meteors; yellow curved skip arrow; white surrender flag; two white arrows circling worm; blue ice cube.
+Row 13: purple glowing magic bullet; twin-cylinder jetpack with orange exhaust; floating feather and moon low gravity; running boots speed trails; red laser crosshair.
+Row 14: translucent ghost worm for invisibility; EMPTY BLACK; EMPTY BLACK; EMPTY BLACK; EMPTY BLACK.
+This atlas is sliced programmatically in a rigid 5x14 CSS grid: alignment and exact order are essential. No surrounding UI.

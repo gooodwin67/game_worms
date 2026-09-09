@@ -33,20 +33,25 @@ export class TurnMachine {
     do { this.team = (this.team + 1) % g.teams.length; } while (g.teams[this.team].surrendered || !g.teams[this.team].worms.some(w => w.alive));
     const worms = g.teams[this.team].worms;
     do { this.cursors[this.team] = (this.cursors[this.team] + 1) % worms.length; } while (!worms[this.cursors[this.team]].alive);
-    g.active = worms[this.cursors[this.team]]; g.wind = (Math.random() * 2 - 1) * WIND_MAX;
+    g.active = worms[this.cursors[this.team]];
+    g.activeMoved = false; // <-- Сбрасываем флаг движения для нового хода
+    g.wind = (Math.random() * 2 - 1) * WIND_MAX;
     for (const worm of g.worms) if (worm.team === this.team) { worm.frozen = false; worm.speedBoost = false; worm.invisible = false; worm.laserSight = false; }
     for (const worm of g.worms) if (worm.alive && !worm.frozen && (worm.poison || worm.radiation)) g.damage(worm, Math.min(worm.hp - 1, 2));
     this.remaining = 45; this.shots = 2; this.charge = 0; this.weapon = 'bazooka'; this.state = TURN.WAITING_INPUT;
     g.angle = g.active.facing < 0 ? Math.PI * .75 : Math.PI * .25;
     g.keys.clear(); g.weapons.resetTarget(); g.bot.reset();
   }
-  beginCharge() { if (this.state === TURN.WAITING_INPUT && this.game.active?.alive) { this.charge = 0; this.state = TURN.CHARGING_SHOT; if (!this.game.weapons.needsCharge(this.weapon)) this.release(); } }
+  beginCharge() { if (this.state === TURN.WAITING_INPUT && this.game.active?.alive) { this.charge = 0; this.state = TURN.CHARGING_SHOT; if (this.game.weapons.needsCharge(this.weapon)) this.game.audio?.startLoop('energyCharge'); else this.release(); } }
+  cancelCharge() { if (this.state !== TURN.CHARGING_SHOT) return; this.game.audio?.stopLoop('energyCharge'); this.state = TURN.WAITING_INPUT; this.charge = 0; }
   release() {
     if (this.state !== TURN.CHARGING_SHOT) return;
+    this.game.audio?.stopLoop('energyCharge');
     this.state = TURN.ACTION_RESOLVING;
     if (this.game.weapons.fire(this.weapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
+    this.game.audio?.play('energyShot');
     if (this.state === TURN.ACTION_RESOLVING || this.state === TURN.SETTLING) {
-      if (!this.game.weapons.drilling && !['skipGo','surrender','freeze','selectWorm','scales','teleport','girder','girderPack'].includes(this.weapon)) this.game.weapons.retreat = Math.max(this.game.weapons.retreat, 3);
+      if (!this.game.weapons.drilling && !['skipGo', 'surrender', 'freeze', 'selectWorm', 'scales', 'teleport', 'girder', 'girderPack'].includes(this.weapon)) this.game.weapons.retreat = Math.max(this.game.weapons.retreat, 3);
       if (this.weapon !== 'freeze') for (const worm of this.game.teams[this.team].worms) worm.invisible = false;
     }
   }

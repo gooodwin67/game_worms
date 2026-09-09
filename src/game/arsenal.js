@@ -25,8 +25,8 @@ export class Weapons {
   constructor(game) {
     this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.projectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillDirection=0;this.movementMode=null;this.hazards=[];this.message='';
     this.ray=new RAPIER.Ray({x:0,y:0},{x:1,y:0});this.velocity={x:0,y:0};this.target={x:48,y:20};this.targetSet=false;
-    this.byCollider=new Map();this.pool=[];this.geometry=new THREE.CircleGeometry(1,16);
-    for(let i=0;i<80;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial());mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh});}
+    this.byCollider=new Map();this.pool=[];this.geometry=new THREE.PlaneGeometry(1,1);
+    for(let i=0;i<80;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial({transparent:true,alphaTest:.08,depthWrite:false,side:THREE.DoubleSide}));mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh});}
     this.tether=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),new THREE.LineBasicMaterial({color:0xe6cf9b}));this.tether.frustumCulled=false;this.tether.visible=false;game.scene.add(this.tether);
     this.marker=new THREE.Mesh(new THREE.RingGeometry(.5,.65,24),new THREE.MeshBasicMaterial({color:0xff7799}));this.marker.visible=false;game.scene.add(this.marker);
     this.onCollision=(a,b,started)=>{if(!started)return;const p=this.byCollider.get(a),q=this.byCollider.get(b);if(p)p.hit=true;if(q)q.hit=true;};
@@ -45,7 +45,7 @@ export class Weapons {
     this.velocity.x=vx;this.velocity.y=vy;body.setLinvel(this.velocity,true);
     if(['bazooka','napalm','mailstrike','mbBomb'].includes(type))body.addForce({x:this.g.wind*body.mass(),y:0},true);
     Object.assign(p,{active:true,body,collider,type,remaining,age:0,x,y,hit:false,triggered:false,owner:this.g.active,ownerClear:false,dir:this.g.active?.facing||1,targetX:this.target.x,targetY:this.target.y,gas:false,stage:'walking',heading:Math.PI/2,damageOverride:null,radiusOverride:null,remoteFragment:false,tick:0,bounces:0,delay:0});
-    p.mesh.material.color.setHex(COLORS[type]||0xffffff);p.mesh.scale.set(radius*(type==='sheep'||type==='superSheep'||type==='pigeon'?1.5:1),radius,1);p.mesh.position.set(x,y,.2);p.mesh.visible=true;
+    this.g.weaponArt.projectile(p,type,radius);p.mesh.position.set(x,y,.2);p.mesh.visible=true;
     this.byCollider.set(collider.handle,p);return p;
   }
   remove(p){this.byCollider.delete(p.collider.handle);this.g.world.removeRigidBody(p.body);p.active=false;p.mesh.visible=false;}
@@ -283,8 +283,8 @@ export class Weapons {
         p.ownerClear=true;
         for(const w of g.worms)if(w.alive&&(w!==p.owner||p.ownerClear)&&Math.hypot(w.x-p.x,w.y-p.y)<2){p.triggered=true;p.remaining=3;this.endUtility(true);g.turn.state=TURN.ACTION_RESOLVING;g.turn.charge=0;g.turn.shots=0;this.retreat=0;break;}
       }
-      p.mesh.position.set(p.x,p.y,.2);p.mesh.rotation.z+=dt*(p.type==='sheep'?0:2);
-      if(p.type==='mine')p.mesh.material.color.setHex(p.triggered?(Math.floor(p.age*12)%2?0xff3333:0xffffff):0xf1b33c);
+      p.mesh.position.set(p.x,p.y,.2);g.weaponArt.orient(p,dt);
+      if(p.type==='mine')p.mesh.material.color.setHex(p.triggered?(Math.floor(p.age*12)%2?0xff3333:0xffffff):0xffffff);
       if((p.type!=='homing'&&p.y<(g.waterLevel||0)-.5)||p.y < -5 || p.x < -10 || p.x > MAP.width+10){this.remove(p);continue;}
       const impact=p.hit&&(GROUND_PROJECTILES.has(p.type)||p.type==='mortar'||p.type==='donkey'||p.type==='napalm'||p.type==='mailstrike'||p.type==='carpet'||p.type==='armageddon'||p.type==='moleBomb');
       if(p.type==='holy'&&p.remaining<=0&&p.age<30&&Math.hypot(p.body.linvel().x,p.body.linvel().y)>.15)continue;
@@ -309,7 +309,7 @@ export class Weapons {
     if(['cluster','banana','superBanana','mingVase','salvation'].includes(type)){
       const count=5;
       for(let i=0;i<count;i++){const a=.2+i*(Math.PI-.4)/(count-1),part=this.spawn('fragment',x+Math.cos(a)*.5,y+.5,Math.cos(a)*10,Math.sin(a)*10,type==='superBanana'?20:2);
-        if(part){part.owner=owner;part.damageOverride=type==='cluster'?30:type==='mingVase'?25:75;part.radiusOverride=type==='cluster'||type==='mingVase'?1.3:3.2;part.remoteFragment=type==='superBanana';}}
+        if(part){this.g.weaponArt.projectile(part,type==='superBanana'?'banana':type,.12);part.owner=owner;part.damageOverride=type==='cluster'?30:type==='mingVase'?25:75;part.radiusOverride=type==='cluster'||type==='mingVase'?1.3:3.2;part.remoteFragment=type==='superBanana';}}
     }
     if(type==='mortar')for(let i=0;i<5;i++){const a=Math.PI/2+(i-2)*.18,part=this.spawn('fragment',x,y,Math.cos(a)*8,Math.sin(a)*10,1.2);if(part){part.owner=owner;part.damageOverride=30;}}
     if(type==='petrol'||type==='napalm'||type==='frenchSheep')this.hazards.push({kind:'fire',x,y,radius:type==='napalm'?3.5:2.8,damage:type==='napalm'?12:15,remaining:type==='napalm'?4:5,tick:.2});

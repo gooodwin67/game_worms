@@ -7,8 +7,8 @@ import { Game } from './game/game.js';
 
 export class App {
   constructor() {
-    this.game = new Game(document.querySelector('#game-canvas'));
     this.audio = new AudioManager();
+    this.game = new Game(document.querySelector('#game-canvas'), this.audio);
     this.i18n = new I18n(localStorage.getItem('game-language') || 'ru');
     this.sdk = new YandexSdk({
       onPause: () => this.pause(),

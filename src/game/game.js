@@ -4,6 +4,8 @@ import { GameLoop, TurnMachine, TURN, MAP, GRAVITY, COLORS, FIXED_DT } from './c
 import { Terrain } from './terrain.js';
 import { ExplosionParticles } from './particles.js';
 import { Weapons, Bot, ARSENAL } from './weapons.js';
+import { WeaponPanel } from './weapon-panel.js';
+import { WeaponArt, disposeWeaponMesh } from './weapon-art.js';
 
 const STANDING_SLOPE_NORMAL_Y = Math.cos(80 * Math.PI / 180);
 
@@ -57,9 +59,20 @@ const DUCK_PARAMS = {
   tailRotZ: 0.71,
   tailRotY: -0.07
 };
+const WORM_NAMES = [
+  'Крякен', 'Селезень', 'Сержант Кряк', 'Бомбардир', 'Дональд',
+  'Крякадзе', 'Перочин', 'Майор Пух', 'Даффи', 'Штурмовик',
+  'Пулемётчик', 'Крылан', 'Генерал Гусь', 'Лапчатый', 'Охотник',
+  'Взрывутка', 'Ути-Пути', 'Снайпер', 'Крякозябра', 'Броникряк',
+  'Зенитка', 'Терминатор', 'Динамит', 'Капитан Плавник', 'Рядовой Кряк',
+  'Адмирал Клюв', 'Фугас', 'Осколок', 'Плюх', 'Вжик',
+  'Партизан', 'Громила', 'Шквал', 'Клюворез', 'Торпеда',
+  'Рикошет', 'Калибр', 'Патрон', 'Базукер', 'Корсар'
+];
 
 export class Game {
-  constructor(canvas) {
+  constructor(canvas, audio = null) {
+    this.audio = audio;
     this.canvas = canvas; this.scene = new THREE.Scene(); this.scene.background = new THREE.Color(0x101e30);
     this.camera = new THREE.OrthographicCamera(-48, 48, 27, -27, .1, 200); this.camera.position.set(48, 27, 100);
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); this.renderer.setPixelRatio(Math.min(devicePixelRatio || 2, 2)); this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -71,115 +84,13 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.lowGravity = false;
+    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.footstepTimer = 0; this.lowGravity = false;
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
     this.inMenu = true; this.installUI(); this.bindInput();
   }
 
 
-  createWeaponMesh(type) {
-    const group = new THREE.Group();
-    const darkMat = new THREE.MeshToonMaterial({ color: 0x242d38 });
-    const woodMat = new THREE.MeshToonMaterial({ color: 0x8b5a2b });
-    const metalMat = new THREE.MeshToonMaterial({ color: 0x718096 });
-
-    switch (type) {
-      case 'bazooka': {
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 0.8, 12), new THREE.MeshToonMaterial({ color: 0x4a5d3f }));
-        barrel.rotation.z = -Math.PI / 2;
-        barrel.position.x = 0.2;
-        const exhaust = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.15, 12), darkMat);
-        exhaust.rotation.z = Math.PI / 2;
-        exhaust.position.x = -0.22;
-        group.add(barrel, exhaust);
-        break;
-      }
-      case 'handgun':
-      case 'uzi':
-      case 'minigun':
-      case 'shotgun': {
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.7, 8), metalMat);
-        barrel.rotation.z = -Math.PI / 2;
-        barrel.position.x = 0.25;
-        const stock = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.08, 0.06), woodMat);
-        stock.position.x = -0.15;
-        group.add(barrel, stock);
-        break;
-      }
-      case 'mortar':
-      case 'homing':
-      case 'pigeon':
-      case 'magicBullet': {
-        const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.1, 0.75, 10), metalMat);
-        barrel.rotation.z = -Math.PI / 2;
-        barrel.position.x = 0.22;
-        group.add(barrel);
-        break;
-      }
-      case 'longbow': {
-        const bow = new THREE.Mesh(new THREE.TorusGeometry(.2, .035, 8, 16, Math.PI), woodMat);
-        bow.rotation.z = -Math.PI / 2;
-        group.add(bow);
-        break;
-      }
-      case 'grenade':
-      case 'cluster': {
-        const ball = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 12), new THREE.MeshToonMaterial({ color: type === 'grenade' ? 0x2e6f40 : 0xd97706 }));
-        const pin = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.06, 0.04), darkMat);
-        pin.position.y = 0.12;
-        group.add(ball, pin);
-        break;
-      }
-      case 'dynamite': {
-        for (let i = -1; i <= 1; i++) {
-          const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.35, 8), new THREE.MeshToonMaterial({ color: 0xdc2626 }));
-          stick.position.set(0.05, i * 0.06, 0);
-          stick.rotation.z = Math.PI / 2;
-          group.add(stick);
-        }
-        break;
-      }
-      case 'mine': {
-        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.16, 0.08, 12), new THREE.MeshToonMaterial({ color: 0xd97706 }));
-        const light = new THREE.Mesh(new THREE.SphereGeometry(0.03, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff0000 }));
-        light.position.y = 0.05;
-        group.add(disc, light);
-        break;
-      }
-      case 'sheep': {
-        const body = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 12), new THREE.MeshToonMaterial({ color: 0xf8fafc }));
-        const head = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), darkMat);
-        head.position.set(0.15, 0.05, 0);
-        group.add(body, head);
-        break;
-      }
-      case 'drill':
-      case 'pneumaticDrill':
-      case 'blowTorch': {
-        const motor = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.16, 0.14), new THREE.MeshToonMaterial({ color: 0xfacc15 }));
-        const bit = new THREE.Mesh(new THREE.ConeGeometry(0.09, 0.25, 8), metalMat);
-        bit.rotation.z = -Math.PI / 2;
-        bit.position.x = 0.22;
-        group.add(motor, bit);
-        break;
-      }
-      case 'teleport':
-      case 'airstrike':
-      case 'jetPack': {
-        const device = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.22, 0.06), darkMat);
-        const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.14, 6), metalMat);
-        antenna.position.set(0.06, 0.16, 0);
-        group.add(device, antenna);
-        break;
-      }
-      default: {
-        // Заглушка/рукопашная
-        const item = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), metalMat);
-        group.add(item);
-      }
-    }
-    return group;
-  }
+  createWeaponMesh(type) { return this.weaponArt.create(type); }
 
   // Фабрика сборки 3D-персонажа (Боевая утка)
   createDuck(teamColor) {
@@ -356,6 +267,8 @@ export class Game {
 
   async load() {
     await RAPIER.init();
+    this.weaponArt = new WeaponArt(Object.keys(ARSENAL));
+    await this.weaponArt.load();
 
     // Загружаем картинку карты (PNG с прозрачностью)
     const img = new Image();
@@ -370,6 +283,7 @@ export class Game {
   }
 
   configure() {
+    this.weaponPanel?.close();
     this.loop.pause();
     if (this.world) {
       this.terrain.dispose();
@@ -377,6 +291,7 @@ export class Game {
       this.weapons.dispose();
       if (this.water) { this.water.removeFromParent(); this.water.geometry.dispose(); this.water.material.dispose(); }
       for (const w of this.worms) {
+        disposeWeaponMesh(w.duck.weaponMesh);
         w.duck.dispose();
         w.label.remove();
       }
@@ -414,8 +329,12 @@ export class Game {
       perTeam = Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
     const rows = this.teamRows.children;
 
+    // Перемешиваем пул имён для матча без повторов
+    const availableNames = [...WORM_NAMES].sort(() => Math.random() - 0.5);
+    let nameIndex = 0;
+
     for (let t = 0; t < count; t++) {
-      const name = rows[t].querySelector('input').value.trim() || `Игрок ${t + 1}`,
+      const name = rows[t].querySelector('input').value.trim() || `Команда ${t + 1}`,
         bot = rows[t].querySelector('select').value;
       const team = { name, bot, worms: [] };
       this.teams.push(team);
@@ -438,10 +357,18 @@ export class Game {
         mesh.position.set(x, y, 0);
         this.scene.add(mesh);
 
+        // Берём персональное имя из пула
+        const wormName = availableNames[nameIndex % availableNames.length];
+        nameIndex++;
+
         const label = document.createElement('div');
         label.className = 'worm-label';
         const text = document.createElement('span');
-        text.textContent = `${name} · ${i + 1}`;
+        text.textContent = wormName;
+        // Подкрашиваем рамку и текст в цвет команды
+        text.style.borderColor = `#${COLORS[t].toString(16).padStart(6, '0')}`;
+        text.style.color = `#${COLORS[t].toString(16).padStart(6, '0')}`;
+
         const health = document.createElement('progress');
         health.max = 100;
         health.value = 100;
@@ -450,9 +377,10 @@ export class Game {
 
         const worm = {
           body, collider, mesh, duck, label, health, team: t,
+          name: wormName,
           hp: 100, alive: true, state: 'airborne', facing: 1, slideTime: 0, speedBoost: false, invisible: false, frozen: false, poison: 0, radiation: 0,
           x, y, previousX: x, previousY: y, vx: 0, vy: 0,
-          grounded: false, groundNormalX: 0, groundNormalY: 1,
+          grounded: false, airborneTime: 0, groundNormalX: 0, groundNormalY: 1,
           animTime: Math.random() * 5
         };
 
@@ -461,6 +389,8 @@ export class Game {
         this.wormByCollider.set(collider.handle, worm);
       }
     }
+
+
 
     this.groundRay = new RAPIER.Ray({ x: 0, y: 0 }, { x: 0, y: -1 });
     this.contactNormal = { x: 0, y: 0 };
@@ -498,38 +428,117 @@ export class Game {
 
     if (!this.aim) {
       this.aim = new THREE.Group();
-      const barLength = 3.5;
-      const barHeight = 0.12;
 
-      const barGeo = new THREE.PlaneGeometry(barLength, barHeight);
-      barGeo.translate(barLength / 2, 0, 0);
+      // 1. Конус силы выстрела (трапеция со скруглением на конце)
+      // Размеры: длина 2.6, ширина у основания 0.12, на конце 0.55
+      const coneLength = 2.6;
+      const coneGeo = new THREE.PlaneGeometry(coneLength, 0.6, 1, 1);
+      // Смещаем pivot к началу (дулу оружия)
+      coneGeo.translate(coneLength / 2, 0, 0);
 
-      const bgMat = new THREE.MeshBasicMaterial({ color: 0x1c2b3d, transparent: true, opacity: 0.65 });
-      this.aimBackground = new THREE.Mesh(barGeo, bgMat);
-      this.aimBackground.position.set(0.9, 0, 0.09);
-      this.aim.add(this.aimBackground);
+      this.aimConeMat = new THREE.ShaderMaterial({
+        uniforms: {
+          charge: { value: 0.0 }
+        },
+        vertexShader: `
+          varying vec2 vUv;
+          void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: `
+          uniform float charge;
+          varying vec2 vUv;
 
-      this.aimFillMat = new THREE.MeshBasicMaterial({ color: 0x44ff66, transparent: true, opacity: 0.95 });
-      this.aimFill = new THREE.Mesh(barGeo, this.aimFillMat);
-      this.aimFill.position.set(0.9, 0, 0.1);
-      this.aim.add(this.aimFill);
+          void main() {
+            // Если заряд нулевой — конус полностью скрыт
+            if (charge <= 0.001) discard;
 
-      const crosshairGeo = new THREE.RingGeometry(0.18, 0.26, 20);
-      const crosshairMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
-      this.aimReticle = new THREE.Mesh(crosshairGeo, crosshairMat);
-      this.aimReticle.position.set(0.9 + barLength + 0.3, 0, 0.1);
+            // vUv.x идёт от 0.0 (дуло) до 1.0 (макс. длина)
+            // Обрезаем длину конуса строго по уровню заряда
+            if (vUv.x > charge) discard;
+
+            // Форма конуса: узкий у дула, широкий на конце
+            float halfWidth = mix(0.12, 0.48, vUv.x);
+            float distFromCenter = abs(vUv.y - 0.5);
+
+            // Скругляем вершину растущего конуса
+            float tipDist = (vUv.x - (charge - 0.08)) / 0.08;
+            if (tipDist > 0.0) {
+              halfWidth *= sqrt(max(0.0, 1.0 - tipDist * tipDist));
+            }
+
+            if (distFromCenter > halfWidth) discard;
+
+            // Концентрические градиентные слои как в Worms:
+            // Красный -> Красно-оранжевый -> Оранжевый -> Желто-песочный
+            float t = vUv.x;
+            vec3 colDarkRed   = vec3(0.78, 0.12, 0.10);
+            vec3 colOrangeRed = vec3(0.92, 0.32, 0.12);
+            vec3 colOrange    = vec3(0.96, 0.62, 0.22);
+            vec3 colYellow    = vec3(0.98, 0.82, 0.52);
+
+            vec3 color = colDarkRed;
+            if (t > 0.65) {
+              color = mix(colOrange, colYellow, (t - 0.65) / 0.35);
+            } else if (t > 0.3) {
+              color = mix(colOrangeRed, colOrange, (t - 0.3) / 0.35);
+            } else {
+              color = mix(colDarkRed, colOrangeRed, t / 0.3);
+            }
+
+            // Тонкое затемнение по внешним боковым краям конуса
+            float edgeFactor = smoothstep(halfWidth, halfWidth * 0.7, distFromCenter);
+            color = mix(color * 0.75, color, edgeFactor);
+
+            gl_FragColor = vec4(color, 0.95);
+          }
+        `,
+        transparent: true,
+        depthWrite: false
+      });
+
+      this.aimCone = new THREE.Mesh(coneGeo, this.aimConeMat);
+      this.aimCone.position.set(0.65, 0, 0.1);
+      this.aim.add(this.aimCone);
+
+      // 2. Аутентичный прицел-перекрестие Worms (кружок + перекрестие + точка)
+      this.aimReticle = new THREE.Group();
+
+      // Внешнее кольцо
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.24, 0.29, 24),
+        new THREE.MeshBasicMaterial({ color: 0xff6b7a, side: THREE.DoubleSide })
+      );
+
+      // Перекрестие
+      const crossH = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.58, 0.05),
+        new THREE.MeshBasicMaterial({ color: 0xff6b7a })
+      );
+      const crossV = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.05, 0.58),
+        new THREE.MeshBasicMaterial({ color: 0xff6b7a })
+      );
+
+      // Центральная белая точка
+      const centerDot = new THREE.Mesh(
+        new THREE.CircleGeometry(0.05, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+      );
+      centerDot.position.z = 0.01;
+
+      this.aimReticle.add(ring, crossH, crossV, centerDot);
+      // Прицел находится сразу за максимальной границей конуса
+      this.aimReticle.position.set(0.65 + coneLength + 0.35, 0, 0.12);
       this.aim.add(this.aimReticle);
-
-      this.chargeColorStart = new THREE.Color(0x44ff66);
-      this.chargeColorMid = new THREE.Color(0xffd166);
-      this.chargeColorEnd = new THREE.Color(0xff3344);
-      this.tempColor = new THREE.Color();
 
       this.scene.add(this.aim);
     }
   }
 
-  createExplosion(x, y, radius) { this.terrain.createExplosion(x, y, radius); for (const w of this.worms) if (w.alive) w.body.wakeUp(); }
+  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.terrain.createExplosion(x, y, radius); for (const w of this.worms) if (w.alive) w.body.wakeUp(); }
   damage(w, amount, force = false) {
     if (!w.alive || (w.frozen && !force)) return;
     w.hp = Math.max(0, w.hp - amount);
@@ -545,8 +554,8 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
-  pause() { this.loop.pause(); this.keys.clear(); if (this.turn?.state === TURN.CHARGING_SHOT) { this.turn.state = TURN.WAITING_INPUT; this.turn.charge = 0; } }
+  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
+  pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
   humanInput() { return this.running && !this.winner && this.active?.alive && !this.teams[this.turn.team].bot; }
@@ -557,15 +566,26 @@ export class Game {
     if (!this.winner) { this.turn.update(dt); this.bot.update(dt); }
 
     if (this.humanInput() && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
+
       const w = this.active,
         direction = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
       const jump = this.keys.delete('KeyW');
+      // Если боец пошёл, прыгнул или начал заряжать выстрел — скрываем плашку
+      if (direction !== 0 || jump || this.turn.state === TURN.CHARGING_SHOT) {
+        this.activeMoved = true;
+      }
+
+      if (this.keys.has('ArrowUp') || this.keys.has('ArrowDown')) {
+        this.activeMoved = true;
+      }
       if (direction) {
         w.facing = direction;
         if (Math.cos(this.angle) * direction < 0) this.angle = Math.PI - this.angle;
       }
       if (w.grounded) {
         if (direction) {
+          this.footstepTimer -= dt;
+          if (this.footstepTimer <= 0) { this.audio?.play('footstep'); this.footstepTimer = w.speedBoost ? .18 : .28; }
           const blend = 1 - Math.exp(-9 * dt);
           const walkSpeed = w.speedBoost ? 6.8 : 3.4;
           this.motion.x = w.vx + (direction * walkSpeed * w.groundNormalY - w.vx) * blend;
@@ -573,6 +593,8 @@ export class Game {
           w.body.setLinvel(this.motion, true);
         }
         if (jump) {
+          this.audio?.play('jump');
+          this.footstepTimer = 0;
           this.motion.x = w.facing * 3.8 + w.vx * .25;
           this.motion.y = 5.8;
           w.body.setLinvel(this.motion, true);
@@ -623,10 +645,10 @@ export class Game {
     this.weapons.updateMovement(dt);
     this.world.step(this.events);
     this.weapons.update(dt);
-    this.syncWorms();
+    this.syncWorms(dt);
   }
 
-  syncWorms() {
+  syncWorms(dt = 0) {
     for (const w of this.worms) if (w.alive) {
       const wasGrounded = w.grounded, fallSpeed = w.vy;
       const p = w.body.translation(), v = w.body.linvel();
@@ -654,7 +676,16 @@ export class Game {
           }
         }
       }
-      if (w.grounded && !wasGrounded && fallSpeed < -1) w.slideTime = .45;
+      if (!w.grounded) {
+        w.airborneTime += dt;
+      } else {
+        const wasActuallyAirborne = !wasGrounded && w.airborneTime >= .4;
+        if (wasActuallyAirborne && fallSpeed < -2) {
+          w.slideTime = .45;
+          this.audio?.play('landing');
+        }
+        w.airborneTime = 0;
+      }
       w.state = w.grounded ? 'alive' : 'airborne';
     }
   }
@@ -699,18 +730,23 @@ export class Game {
 
       if (isShootingActive) {
         if (d.currentWeapon !== this.turn.weapon) {
-          if (d.weaponMesh) d.weaponMesh.removeFromParent();
+          disposeWeaponMesh(d.weaponMesh);
           d.weaponMesh = this.createWeaponMesh(this.turn.weapon);
-          d.weaponPivot.add(d.weaponMesh);
+          w.mesh.add(d.weaponMesh);
           d.currentWeapon = this.turn.weapon;
         }
-        d.weaponPivot.visible = true;
+        d.weaponPivot.visible = false;
+        d.weaponMesh.visible = true;
 
         // Поворот оружия по направлению прицеливания с учётом стороны взгляда
         const aimAngle = (w.facing > 0) ? this.angle : (Math.PI - this.angle);
-        d.weaponPivot.rotation.z = aimAngle;
+        const thought = this.weaponArt.thought(this.turn.weapon);
+        d.weaponMesh.position.set(thought ? w.facing * .95 : w.facing * .28, thought ? 1.9 : -.05, 2);
+        d.weaponMesh.scale.x = thought ? 1 : w.facing;
+        d.weaponMesh.rotation.z = thought ? -w.mesh.rotation.z : aimAngle * w.facing;
       } else {
         if (d.weaponPivot) d.weaponPivot.visible = false;
+        if (d.weaponMesh) d.weaponMesh.visible = false;
       }
 
       // Состояния анимации утки
@@ -752,28 +788,25 @@ export class Game {
       (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT);
     this.aim.visible = showAim;
 
+
     if (showAim) {
       this.aim.position.copy(this.active.mesh.position);
       this.aim.rotation.z = this.angle;
 
+      // Перекрестие прицела всегда сохраняет горизонтальное положение (не крутится вокруг своей оси)
+      this.aimReticle.rotation.z = -this.angle;
+
       const charge = THREE.MathUtils.clamp(this.turn.charge, 0, 1);
-      this.aimFill.scale.x = charge;
-      this.aimFill.scale.y = 1 + charge * 0.4;
 
-      if (charge < 0.5) {
-        this.tempColor.copy(this.chargeColorStart).lerp(this.chargeColorMid, charge * 2);
-      } else {
-        this.tempColor.copy(this.chargeColorMid).lerp(this.chargeColorEnd, (charge - 0.5) * 2);
-      }
-      this.aimFillMat.color.copy(this.tempColor);
+      // Конус заполняется только при наборе силы
+      this.aimConeMat.uniforms.charge.value = charge;
 
-      if (charge > 0.95) {
-        const pulse = 1 + Math.sin(this.time * 25) * 0.2;
+      // При максимальном заряде прицел пульсирует
+      if (charge > 0.96) {
+        const pulse = 1.0 + Math.sin(this.time * 24) * 0.15;
         this.aimReticle.scale.set(pulse, pulse, 1);
-        this.aimReticle.material.color.setHex(0xff3344);
       } else {
         this.aimReticle.scale.set(1, 1, 1);
-        this.aimReticle.material.color.setHex(0xffffff);
       }
     }
 
@@ -798,8 +831,12 @@ export class Game {
   }
 
   bindInput() {
+    this.canvas.addEventListener('contextmenu', e => { e.preventDefault(); this.weaponPanel.flip(); });
     window.addEventListener('keydown', e => {
       if (/INPUT|SELECT|TEXTAREA/.test(e.target.tagName) || !this.humanInput()) return;
+      if (e.code === 'Escape' && this.weaponPanel.open) { e.preventDefault(); this.weaponPanel.close(true); return; }
+      if (/^F([1-9]|1[0-2])$/.test(e.code)) { e.preventDefault(); if (!e.repeat) this.weaponPanel.shortcut(e.code); return; }
+      if (this.weaponPanel.open) return;
       if (['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
@@ -819,20 +856,21 @@ export class Game {
     window.addEventListener('blur', () => {
       this.keys.clear();
       if (this.turn?.state === TURN.CHARGING_SHOT) {
-        this.turn.state = TURN.WAITING_INPUT;
-        this.turn.charge = 0;
+        this.turn.cancelCharge();
       }
     });
     this.canvas.addEventListener('pointermove', e => {
-      if (!this.humanInput()) return;
+      if (!this.humanInput() || this.weaponPanel.open) return;
       const rect = this.canvas.getBoundingClientRect();
       this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
       if (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT) {
         this.angle = Math.atan2(this.vector.y - this.active.y, this.vector.x - this.active.x);
         this.active.facing = Math.cos(this.angle) < 0 ? -1 : 1;
+        this.activeMoved = true; // <-- Мышь сдвинулась для прицела — плашка исчезает
       }
     });
     this.canvas.addEventListener('pointerdown', e => {
+      if (e.button === 0 && this.weaponPanel.open) { this.weaponPanel.close(); return; }
       if (e.button === 0 && this.humanInput()) {
         this.canvas.setPointerCapture(e.pointerId);
         if (this.weapons.remote()) return;
@@ -849,7 +887,7 @@ export class Game {
       if (e.button === 0 && this.humanInput()) this.turn.release();
     });
     this.canvas.addEventListener('pointercancel', () => {
-      if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.state = TURN.WAITING_INPUT;
+      this.turn?.cancelCharge();
     });
     this.canvas.addEventListener('wheel', e => {
       e.preventDefault();
@@ -911,7 +949,7 @@ export class Game {
     for (let i = 0; i < 6; i++) {
       const row = document.createElement('div');
       row.className = 'team-row';
-      row.innerHTML = `<input aria-label="Имя команды ${i + 1}" maxlength="24" value="Игрок ${i + 1}"><select aria-label="Управление командой ${i + 1}"><option value="">Человек</option><option value="easy">Бот · легко</option><option value="medium">Бот · средне</option><option value="hard">Бот · сложно</option></select>`;
+      row.innerHTML = `<input aria-label="Имя команды ${i + 1}" maxlength="24" value="Команда ${i + 1}"><select aria-label="Управление командой ${i + 1}"><option value="">Человек</option><option value="easy">Бот · легко</option><option value="medium">Бот · средне</option><option value="hard">Бот · сложно</option></select>`;
       row.hidden = i >= 3;
       this.teamRows.append(row);
     }
@@ -926,38 +964,41 @@ export class Game {
     this.matchHud = document.createElement('section');
     this.matchHud.className = 'match-hud';
     this.matchHud.hidden = true;
-    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button data-weapon="bazooka">Базука</button><button data-weapon="grenade">Граната</button><button data-weapon="shotgun">Дробовик ×2</button><button class="restart-match">Новый матч</button></div><progress class="charge" max="1" value="0"></progress><p class="controls-help">A/D или ←/→ — ходить · W — прыжок · мышь или ↑/↓ — прицел · удерживайте пробел / ЛКМ — сила · 1–5 — запал · колесо — зум</p>';
-
-    const weaponRow = this.matchHud.querySelector('.weapon-row');
-    weaponRow.querySelectorAll('[data-weapon]').forEach(button => button.remove());
-    for (const [id, name] of Object.entries(ARSENAL)) {
-      const button = document.createElement('button');
-      button.dataset.weapon = id;
-      button.textContent = name;
-      weaponRow.insertBefore(button, weaponRow.lastElementChild);
-    }
+    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · A/D — ходить · W — прыжок · мышь / ↑↓ — прицел · пробел / ЛКМ — огонь · 1–5 — запал</p>';
+    this.weaponPanel = new WeaponPanel(this, this.matchHud.querySelector('.arsenal-toggle'));
 
     const hint = document.createElement('p');
     hint.className = 'weapon-hint';
     this.matchHud.append(hint);
     this.weaponHint = hint;
 
-    document.querySelector('#game-root').append(this.labels, this.matchHud);
-    this.weaponButtons = this.matchHud.querySelectorAll('[data-weapon]');
+    this.audioTestHud = document.createElement('aside');
+    this.audioTestHud.className = 'audio-test-hud';
+    this.audioTestHud.hidden = true;
+    this.audioTestHud.innerHTML = '<strong>Тест звука заряда</strong><span class="audio-test-caption">Натуральный вариант</span><div class="audio-test-buttons"></div>';
+    const audioButtons = this.audioTestHud.querySelector('.audio-test-buttons');
+    const audioVariants = [['▶ Натуральный', 'energyCharge']];
+    for (const [label, name] of audioVariants) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.addEventListener('click', () => {
+        this.audioTestHud.querySelector('.audio-test-caption').textContent = `Играет: ${label}`;
+        this.audio?.preview(name);
+      });
+      audioButtons.append(button);
+    }
+
+    document.querySelector('#game-root').append(this.labels, this.matchHud, this.audioTestHud);
+    this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
-
-    this.matchHud.querySelectorAll('[data-weapon]').forEach(button => button.addEventListener('click', () => {
-      if (this.humanInput() && this.turn.state === TURN.WAITING_INPUT && !this.turn.lockedWeapon) {
-        this.turn.weapon = button.dataset.weapon;
-        this.weapons.resetTarget();
-      }
-    }));
 
     this.matchHud.querySelector('.restart-match').addEventListener('click', () => {
       this.pause();
       this.inMenu = true;
       this.matchHud.hidden = true;
+      this.audioTestHud.hidden = true;
       this.labels.hidden = true;
       document.querySelector('#start-screen').hidden = false;
       document.querySelector('#start-screen').classList.add('overlay--visible');
@@ -972,7 +1013,8 @@ export class Game {
 
   updateHUD() {
     const t = this.turn;
-    const text = this.winner || `${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${t.state} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : t.weapon}`;
+    this.weaponPanel.refresh();
+    const text = this.winner || `${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${t.state} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
     const hints = { girder: 'Прицел — угол; ЛКМ — поставить в свободном месте', girderPack: 'ЛКМ — поставить балку; за ход можно поставить пять', mbBomb: 'ЛКМ — сбросить бомбу сверху', holy: 'Удерживайте пробел — сила броска; взрыв после 3 секунд и остановки', moleBomb: 'Пробел — выпустить, затем начать бурение, затем взорвать', skunk: 'Пробел — выпустить; ещё раз — выпустить газ', salvation: 'Пробел — выпустить; ещё раз — взорвать', superBanana: 'Пробел — бросить; затем разделить; затем взорвать осколки', homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель; пробел — выпустить голубя', magicBullet: 'ЛКМ — выбрать цель; пробел — выпустить волшебную пулю', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'Пробел — поднять воду и заразить незамороженных бойцов', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: '1–5 — размер стада; пробел — выпустить в выбранном направлении', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'Пробел — метеоритный дождь по всей карте', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'Прицел + пробел — зацепиться; A/D — качаться; W/S — длина; пробел — отпустить', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить, затем взлететь, затем взорвать; A/D или ←/→ — поворот', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Пробел — включить/снять; W/↑ — тяга вверх, A/D — в стороны; Enter — сбросить оружие', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
     const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте пробел / ЛКМ для силы выстрела' : 'Пробел / ЛКМ — применить оружие');
     if (this.weaponHint.textContent !== hint) this.weaponHint.textContent = hint;
@@ -989,7 +1031,16 @@ export class Game {
       this.vector.y += 1.4;
       this.vector.project(this.camera);
       w.label.style.transform = `translate(${(this.vector.x * .5 + .5) * this.width}px,${(-this.vector.y * .5 + .5) * this.height}px) translate(-50%,-100%)`;
-      w.label.classList.toggle('active', w === this.active);
+
+      const isActive = (w === this.active);
+      w.label.classList.toggle('active', isActive);
+
+      // Скрываем плашку активного игрока, если он уже сдвинулся или целится
+      if (isActive && this.activeMoved) {
+        w.label.style.display = 'none';
+      } else {
+        w.label.style.display = 'flex';
+      }
     }
   }
 }
