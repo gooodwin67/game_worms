@@ -82,7 +82,7 @@ export class WeaponPanel {
     document.querySelector('#game-root').append(this.root);
   }
   get open() { return !this.root.hidden; }
-  canSelect() { const g = this.game; return g.humanInput() && g.turn.state === 'WAITING_INPUT' && !g.turn.lockedWeapon; }
+  canSelect() { const g = this.game; return g.gameMode !== 'training' && g.humanInput() && g.turn.state === 'WAITING_INPUT' && !g.turn.lockedWeapon; }
   flip() {
     if (this.open) { this.close(); return; }
     if (!this.canSelect()) return;

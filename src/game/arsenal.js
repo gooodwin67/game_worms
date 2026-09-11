@@ -20,6 +20,7 @@ export const ARSENAL = Object.freeze({
 const COLORS = {bazooka:0xffd166,homing:0xff7799,pigeon:0xffffff,magicBullet:0x8b5cf6,mortar:0x94a3b8,grenade:0x70bd65,cluster:0xf5a742,fragment:0xffde99,dynamite:0xf04444,mine:0xf1b33c,sheep:0xffffff,moleBomb:0x8b5e3c,bomb:0x879cb5,napalm:0xf97316};
 const TARGET_WEAPONS = new Set(['homing','pigeon','magicBullet','airstrike','napalm','mailstrike','minestrike','moleSquadron','donkey','mbBomb','frenchSheep','carpet','girder','girderPack']);
 const GUN_WEAPONS = new Set(['handgun','uzi','minigun','longbow']);
+const THROWN_GRENADES = new Set(['grenade','cluster','banana','superBanana','holy']);
 const GROUND_PROJECTILES = new Set(['bazooka','homing','pigeon','magicBullet','mortar','bomb','petrol','mbBomb','donkey','napalm','mailstrike','carpet','armageddon','frenchSheep']);
 export class Weapons {
   constructor(game) {
@@ -111,7 +112,7 @@ export class Weapons {
     if(m.remaining<=0)this.endUtility(g.turn.state!==TURN.WAITING_INPUT);
   }
   fire(type,charge) {
-    const g=this.g,w=g.active,dx=Math.cos(g.angle),dy=Math.sin(g.angle),speed=8+charge*24;
+    const g=this.g,w=g.active,dx=Math.cos(g.angle),dy=Math.sin(g.angle),baseSpeed=8+charge*24,speed=baseSpeed*(THROWN_GRENADES.has(type)?1.2:1);
     this.message='';
     if(!Object.hasOwn(ARSENAL,type)&&type!=='uppercut'){this.message='Неизвестное оружие';return false;}
     let freeSlots=0;for(const item of this.pool)if(!item.active)freeSlots++;
@@ -231,7 +232,7 @@ export class Weapons {
     if(this.burst){const b=this.burst;b.tick-=dt;if(!b.owner.alive)this.burst=null;else if(b.tick<=0){this.fireGun(b.type);b.left--;b.tick=.1;if(!b.left)this.burst=null;}}
     for(let i=this.hazards.length-1;i>=0;i--){
       const hazard=this.hazards[i];hazard.remaining-=dt;hazard.tick-=dt;
-      if(hazard.tick<=0){hazard.tick=1;for(const worm of g.worms)if(worm.alive&&!worm.frozen&&Math.hypot(worm.x-hazard.x,worm.y-hazard.y)<hazard.radius){if(hazard.kind==='poison')worm.poison=Math.max(worm.poison||0,hazard.damage);else g.damage(worm,hazard.damage);}}
+      if(hazard.tick<=0){hazard.tick=1;for(const worm of g.worms)if(worm.alive&&!worm.frozen&&Math.hypot(worm.x-hazard.x,worm.y-hazard.y)<hazard.radius){if(hazard.kind==='poison')worm.poison=Math.max(worm.poison||0,hazard.damage);else g.damage(worm,hazard.damage,false,false);}}
       if(hazard.remaining<=0)this.hazards.splice(i,1);
     }
     if(this.drilling>0){

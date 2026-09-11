@@ -1,8 +1,8 @@
 const translations = {
   ru: {
     loading: 'Загрузка…',
-    title: 'Worms · Hot Seat',
-    subtitle: 'Соберите команды. Разрушайте ландшафт. Останьтесь последними.',
+    title: 'Выбор игры',
+    subtitle: 'Выберите режим, чтобы начать.',
     start: 'Играть',
     game: 'Игра',
     score: 'Счёт',
@@ -11,8 +11,8 @@ const translations = {
   },
   en: {
     loading: 'Loading…',
-    title: 'Worms · Hot Seat',
-    subtitle: 'Build your teams. Break the terrain. Be the last team standing.',
+    title: 'Choose game',
+    subtitle: 'Select a mode to begin.',
     start: 'Play',
     game: 'Game',
     score: 'Score',

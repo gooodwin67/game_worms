@@ -6,6 +6,7 @@ import { ExplosionParticles } from './particles.js';
 import { Weapons, Bot, ARSENAL } from './weapons.js';
 import { WeaponPanel } from './weapon-panel.js';
 import { WeaponArt, disposeWeaponMesh } from './weapon-art.js';
+import { WEAPON_ICON_REGIONS } from './weapon-icon-regions.js';
 
 const STANDING_SLOPE_NORMAL_Y = Math.cos(80 * Math.PI / 180);
 
@@ -84,9 +85,6 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.fogBackground = this.createFogBackground();
-    this.scene.add(this.fogBackground);
-
     this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.footstepTimer = 0; this.lowGravity = false;
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
     this.inMenu = true; this.installUI(); this.bindInput();
@@ -95,92 +93,45 @@ export class Game {
 
   createWeaponMesh(type) { return this.weaponArt.create(type); }
 
-  createFogBackground() {
-    const material = new THREE.ShaderMaterial({
-      uniforms: {
-        time: { value: 0 },
-        speed: { value: .9 },
-        scale: { value: 1 },
-        brightness: { value: 1 },
-        contrast: { value: 1 },
-        verticalFade: { value: 1 }
-      },
-      depthTest: false,
-      depthWrite: false,
-      vertexShader: `
-        varying vec2 vUv;
-        void main() {
-          vUv = uv;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        }
-      `,
-      fragmentShader: `
-        precision highp float;
-        varying vec2 vUv;
-        uniform float time;
-        uniform float speed;
-        uniform float scale;
-        uniform float brightness;
-        uniform float contrast;
-        uniform float verticalFade;
+  createTrainingTarget() {
+    const root = new THREE.Group();
+    const red = new THREE.MeshBasicMaterial({ color: 0xe53935, side: THREE.DoubleSide });
+    const white = new THREE.MeshBasicMaterial({ color: 0xf7f3e8, side: THREE.DoubleSide });
+    const dark = new THREE.MeshBasicMaterial({ color: 0x5b2020, side: THREE.DoubleSide });
+    const addDisc = (radius, material, z) => {
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(radius, 40), material);
+      disc.position.set(0, .28, z);
+      root.add(disc);
+    };
 
-        float hash(vec2 p) {
-          return fract(cos(dot(p, vec2(12.9898, 4.1414))) * 43758.5453);
-        }
+    const pole = new THREE.Mesh(new THREE.PlaneGeometry(.12, .7), dark);
+    pole.position.set(0, -.3, -.02);
+    root.add(pole);
+    const foot = new THREE.Mesh(new THREE.PlaneGeometry(.72, .12), dark);
+    foot.position.set(0, -.61, -.02);
+    root.add(foot);
+    addDisc(.66, red, 0);
+    addDisc(.51, white, .01);
+    addDisc(.37, red, .02);
+    addDisc(.23, white, .03);
+    addDisc(.105, red, .04);
 
-        float noise(vec2 p) {
-          vec2 cell = floor(p);
-          vec2 local = fract(p);
-          local = smoothstep(vec2(0.0), vec2(1.0), local);
-          float a = hash(cell);
-          float b = hash(cell + vec2(1.0, 0.0));
-          float c = hash(cell + vec2(0.0, 1.0));
-          float d = hash(cell + vec2(1.0, 1.0));
-          return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
-        }
-
-        float fbm(vec2 p) {
-          float value = 0.0;
-          float amplitude = 1.0;
-          for (int i = 0; i < 4; i++) {
-            value += noise(p) * amplitude;
-            p *= 2.0;
-            amplitude *= 0.5;
-          }
-          return value;
-        }
-
-        void main() {
-          vec2 p = vUv * vec2(8.0, 3.65) * scale;
-          float animatedTime = time * speed;
-          float q = fbm(p - animatedTime * 0.1);
-          vec2 r = vec2(
-            fbm(p + q + animatedTime * 0.7 - p.x - p.y),
-            fbm(p + q - animatedTime * 0.4)
-          );
-
-          vec3 magentaDark = vec3(0.494, 0.0, 0.38);
-          vec3 magenta = vec3(0.678, 0.0, 0.633);
-          vec3 redShadow = vec3(0.2, 0.0, 0.0);
-          vec3 violet = vec3(0.643, 0.004, 0.841);
-          vec3 color = mix(magentaDark, magenta, fbm(p + r));
-          color += mix(redShadow, violet, r.x);
-          color -= mix(vec3(0.1), vec3(0.9), r.y);
-
-          float fade = pow(max(0.0, 1.0 - vUv.y), verticalFade);
-          color *= cos(1.6 * vUv.y) * fade;
-          color = (color - vec3(0.25)) * contrast + vec3(0.25);
-          color *= brightness;
-          color = max(color, vec3(0.0));
-          gl_FragColor = vec4(color, 1.0);
-        }
-      `
-    });
-    const background = new THREE.Mesh(new THREE.PlaneGeometry(170, 100), material);
-    background.position.set(MAP.width / 2, MAP.height / 2, -20);
-    background.frustumCulled = false;
-    background.renderOrder = -100;
-    return background;
+    const bodyPivot = new THREE.Group();
+    const headGroup = new THREE.Group();
+    const wingLPivot = new THREE.Group();
+    const wingRPivot = new THREE.Group();
+    const tailPivot = new THREE.Group();
+    const weaponPivot = new THREE.Group();
+    root.add(bodyPivot, headGroup, wingLPivot, wingRPivot, tailPivot, weaponPivot);
+    return {
+      root, bodyPivot, headGroup, wingLPivot, wingRPivot, tailPivot, weaponPivot,
+      currentWeapon: null, weaponMesh: null,
+      dispose: () => {
+        root.removeFromParent();
+        root.traverse(child => child.geometry?.dispose());
+        red.dispose(); white.dispose(); dark.dispose();
+      }
+    };
   }
 
   // Фабрика сборки 3D-персонажа (Боевая утка)
@@ -370,6 +321,14 @@ export class Game {
     });
     this.customMapImage = img.complete && img.naturalWidth !== 0 ? img : null;
 
+    const targetTrainingMap = new Image();
+    targetTrainingMap.src = `${import.meta.env.BASE_URL}training/2.png`;
+    await new Promise(resolve => {
+      targetTrainingMap.onload = resolve;
+      targetTrainingMap.onerror = resolve;
+    });
+    this.targetTrainingMapImage = targetTrainingMap.complete && targetTrainingMap.naturalWidth !== 0 ? targetTrainingMap : null;
+
     this.configure();
   }
 
@@ -394,10 +353,22 @@ export class Game {
     this.world.timestep = FIXED_DT;
     this.events = new RAPIER.EventQueue(true);
     // Проверяем, какой режим выбран в стартовом меню
-    const useFile = document.querySelector('input[name="mapSource"]:checked')?.value === 'custom';
-    const mapImage = (useFile && this.customMapImage) ? this.customMapImage : null;
+    this.targetTrainingActive = this.gameMode === 'training' && ['grenade', 'bazooka'].includes(this.trainingWeapon);
+    this.targetTrainingStage = 0;
+    this.trainingIndestructible = this.targetTrainingActive;
+    const useFile = this.gameMode !== 'training' && document.querySelector('input[name="mapSource"]:checked')?.value === 'custom';
+    const mapImage = this.targetTrainingActive ? this.targetTrainingMapImage : (useFile && this.customMapImage) ? this.customMapImage : null;
 
     this.terrain = new Terrain(this.scene, this.world, mapImage);
+    const trainingPlatforms = this.targetTrainingActive ? this.terrain.findPlatformTops() : [];
+    if (trainingPlatforms.length >= 4) {
+      const [playerPlatform, ...targetPlatforms] = trainingPlatforms;
+      this.targetTrainingPlayerPosition = { x: playerPlatform.x, y: playerPlatform.surfaceY + .612 };
+      this.targetTrainingTargets = targetPlatforms.slice(0, 3).map(platform => ({ x: platform.x, y: platform.surfaceY + .67 }));
+    } else {
+      this.targetTrainingPlayerPosition = { x: 10.5, y: this.terrain.spawnHeight(10.5) };
+      this.targetTrainingTargets = [46.7, 60, 73.7].map(x => ({ x, y: this.terrain.spawnHeight(x) }));
+    }
     this.water = new THREE.Mesh(new THREE.PlaneGeometry(MAP.width, 1), new THREE.MeshBasicMaterial({ color: 0x2f8fb3, transparent: true, opacity: .72 }));
     this.water.position.set(MAP.width / 2, -.5, -.05);
     this.water.visible = false;
@@ -418,8 +389,8 @@ export class Game {
     this.angle = Math.PI / 4;
     this.keys.clear();
 
-    const count = Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
-      perTeam = Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
+    const count = this.gameMode === 'training' ? 2 : Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
+      perTeam = this.targetTrainingActive ? 1 : this.gameMode === 'training' ? 3 : Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
     const rows = this.teamRows.children;
     const spawnCount = count * perTeam;
     const spawnSegment = (MAP.width - 10) / spawnCount;
@@ -437,31 +408,36 @@ export class Game {
     let nameIndex = 0;
 
     for (let t = 0; t < count; t++) {
-      const name = rows[t].querySelector('input').value.trim() || `Команда ${t + 1}`,
-        bot = rows[t].querySelector('select').value;
-      const team = { name, bot, color: COLORS[t], worms: [] };
+      const configuredName = rows[t].querySelector('input').value.trim() || `Команда ${t + 1}`,
+        name = this.gameMode === 'training' ? (t === 0 ? 'Учебный отряд' : 'Мишени') : configuredName,
+        selectedBot = rows[t].querySelector('select').value,
+        bot = this.gameMode === 'training' && t > 0 ? 'target' : selectedBot;
+      const team = { name, bot, passive: bot === 'target', color: COLORS[t], worms: [] };
       this.teams.push(team);
 
       for (let i = 0; i < perTeam; i++) {
-        const x = spawnXs[spawnIndex++],
-          y = this.terrain.spawnHeight(x);
-        const body = this.world.createRigidBody(
-          RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y).lockRotations().setLinearDamping(.12).setCcdEnabled(true)
-        );
-        const collider = this.world.createCollider(
-          RAPIER.ColliderDesc.capsule(.23, .38).setMass(1).setFriction(.38).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(0),
-          body
-        );
+        const isTrainingTarget = this.targetTrainingActive && t === 1;
+        const trainingPosition = this.targetTrainingActive ? (isTrainingTarget ? this.targetTrainingTargets[0] : this.targetTrainingPlayerPosition) : null;
+        const x = trainingPosition?.x ?? spawnXs[spawnIndex++],
+          y = trainingPosition?.y ?? this.terrain.spawnHeight(x);
+        const bodyDescription = isTrainingTarget
+          ? RAPIER.RigidBodyDesc.fixed().setTranslation(x, y)
+          : RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y).lockRotations().setLinearDamping(.12).setCcdEnabled(true);
+        const body = this.world.createRigidBody(bodyDescription);
+        const colliderDescription = isTrainingTarget
+          ? RAPIER.ColliderDesc.ball(.66).setFriction(.2).setRestitution(.15).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
+          : RAPIER.ColliderDesc.capsule(.23, .38).setMass(1).setFriction(.38).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(0);
+        const collider = this.world.createCollider(colliderDescription, body);
 
-        // Создаем 3D-утку для команды
-        const duck = this.createDuck(COLORS[t]);
+        // Игрок остаётся уткой, учебная мишень собирается из простых геометрических примитивов.
+        const duck = isTrainingTarget ? this.createTrainingTarget() : this.createDuck(COLORS[t]);
         const mesh = new THREE.Group();
         mesh.add(duck.root);
         mesh.position.set(x, y, 0);
         this.scene.add(mesh);
 
         // Берём персональное имя из пула
-        const wormName = availableNames[nameIndex % availableNames.length];
+        const wormName = isTrainingTarget ? 'Мишень 1' : availableNames[nameIndex % availableNames.length];
         nameIndex++;
 
         const label = document.createElement('div');
@@ -473,17 +449,18 @@ export class Game {
         text.style.color = `#${COLORS[t].toString(16).padStart(6, '0')}`;
 
         const health = document.createElement('progress');
-        health.max = 100;
-        health.value = 100;
+        health.max = isTrainingTarget ? 40 : 100;
+        health.value = isTrainingTarget ? 40 : 100;
         label.append(text, health);
         this.labels.append(label);
 
         const worm = {
           body, collider, mesh, duck, label, health, team: t,
           name: wormName,
-          hp: 100, alive: true, state: 'airborne', facing: 1, slideTime: 0, speedBoost: false, invisible: false, frozen: false, poison: 0, radiation: 0,
+          hp: isTrainingTarget ? 40 : 100, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, slideTime: 0, speedBoost: false, invisible: false, frozen: false, poison: 0, radiation: 0,
+          trainingTarget: isTrainingTarget,
           x, y, previousX: x, previousY: y, vx: 0, vy: 0,
-          grounded: false, airborneTime: 0, airbornePeakY: y, hardFalling: false, recoveryTime: 0, groundNormalX: 0, groundNormalY: 1,
+          grounded: false, airborneTime: 0, airbornePeakY: y, hardFalling: false, knockedDown: false, impactVelocityX: 0, impactSpinDirection: 0, tumbleRotation: 0, recoverySide: -1, recoveryTime: 0, groundNormalX: 0, groundNormalY: 1,
           animTime: Math.random() * 5,
           victoryPhase: Math.random() * Math.PI * 2,
           jumpTapTime: -Infinity, backflipEligibleUntil: -Infinity, backflipRequested: false, backflipStart: -Infinity, backflipping: false, jumpFacing: 1
@@ -523,7 +500,7 @@ export class Game {
     for (const w of this.worms) {
       w.body.setLinvel(this.motion, false);
       w.body.sleep();
-      w.vx = 0; w.vy = 0; w.slideTime = 0; w.grounded = true; w.airborneTime = 0; w.airbornePeakY = w.y; w.hardFalling = false; w.recoveryTime = 0; w.state = 'alive';
+      w.vx = 0; w.vy = 0; w.slideTime = 0; w.grounded = true; w.airborneTime = 0; w.airbornePeakY = w.y; w.hardFalling = false; w.knockedDown = false; w.impactVelocityX = 0; w.impactSpinDirection = 0; w.tumbleRotation = 0; w.recoverySide = -w.facing; w.recoveryTime = 0; w.state = 'alive';
       w.previousX = w.x; w.previousY = w.y;
       w.mesh.position.set(w.x, w.y, 0);
     }
@@ -650,19 +627,32 @@ export class Game {
       card.className = 'team-health-card';
       card.style.setProperty('--team-color', `#${team.color.toString(16).padStart(6, '0')}`);
       card.innerHTML = '<span class="team-health-name"></span><strong class="team-health-value"></strong><div class="team-health-track"><i></i></div>';
-      card.querySelector('.team-health-name').textContent = team.name;
+      card.nameElement = card.querySelector('.team-health-name');
+      card.valueElement = card.querySelector('.team-health-value');
+      card.trackElement = card.querySelector('.team-health-track i');
+      card.nameElement.textContent = team.name;
+      card.renderedHealth = null;
+      card.renderedActive = null;
+      card.renderedEliminated = null;
       this.teamHealthHud.append(card);
       return card;
     });
   }
 
-  createExplosion(x, y, radius) { this.audio?.play('explosion'); const colors = this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
-  damage(w, amount, force = false) {
+  createExplosion(x, y, radius) { this.audio?.play('explosion'); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
+  damage(w, amount, force = false, impact = true) {
     if (!w.alive || (w.frozen && !force)) return;
     w.hp = Math.max(0, w.hp - amount);
     w.health.value = w.hp;
     w.health.title = `${w.hp} HP`;
+    if (impact && amount > 0 && w.hp > 0 && !w.trainingTarget) {
+      w.knockedDown = true;
+      w.impactVelocityX = w.body.linvel().x;
+      w.impactSpinDirection = 0;
+      w.tumbleRotation = w.mesh.rotation.z;
+    }
     if (w.hp === 0) {
+      if (w.trainingTarget && this.advanceTargetTraining(w)) return;
       w.alive = false;
       w.state = 'dead';
       w.mesh.visible = false;
@@ -672,7 +662,7 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.fogSettingsHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
+  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
   pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
@@ -790,6 +780,10 @@ export class Game {
       this.resolveTerrainPenetration(w);
       const p = w.body.translation(), v = w.body.linvel();
       w.x = p.x; w.y = p.y; w.vx = v.x; w.vy = v.y;
+      if (w.knockedDown && w.impactSpinDirection === 0) {
+        const horizontalImpulse = w.vx - w.impactVelocityX;
+        w.impactSpinDirection = Math.abs(horizontalImpulse) > .05 ? -Math.sign(horizontalImpulse) : -w.facing;
+      }
       if (w.y < -3 || w.x < -3 || w.x > MAP.width + 3) { this.damage(w, w.hp, true); continue; }
       if (this.waterLevel > 0 && w.y < this.waterLevel) { this.damage(w, w.hp, true); continue; }
       if (w.body.isSleeping()) continue;
@@ -816,24 +810,52 @@ export class Game {
       if (!w.grounded) {
         w.airborneTime += dt;
         w.airbornePeakY = Math.max(w.airbornePeakY, w.y);
-        w.hardFalling = w.airborneTime >= .4 && (w.airbornePeakY - w.y >= 3.5 || w.vy < -5.5);
+        w.hardFalling = w.knockedDown || (w.airborneTime >= .4 && (w.airbornePeakY - w.y >= 3.5 || w.vy < -5.5));
+        if (w.knockedDown) w.tumbleRotation += w.impactSpinDirection * dt * THREE.MathUtils.clamp(4.5 + Math.hypot(w.vx, w.vy) * .35, 5, 10);
       } else {
         const wasActuallyAirborne = !wasGrounded && w.airborneTime >= .4;
-        const hardLanding = wasActuallyAirborne && (w.airbornePeakY - w.y >= 3.5 || fallSpeed < -5.5);
+        const impactSpeed = Math.hypot(w.vx, w.vy);
+        const impactStillMoving = w.knockedDown && impactSpeed > .55;
+        const hardLanding = (wasActuallyAirborne && (w.airbornePeakY - w.y >= 3.5 || fallSpeed < -5.5)) || (w.knockedDown && !impactStillMoving);
         if (wasActuallyAirborne && fallSpeed < -2) {
           w.slideTime = .45;
         }
         if (hardLanding) {
+          w.recoverySide = w.knockedDown ? w.impactSpinDirection : -w.facing;
           w.recoveryTime = 1.45;
           this.audio?.play('landing');
         }
         w.airborneTime = 0;
         w.airbornePeakY = w.y;
-        w.hardFalling = false;
+        w.hardFalling = impactStillMoving;
+        if (impactStillMoving) w.tumbleRotation += w.impactSpinDirection * dt * THREE.MathUtils.clamp(4.5 + impactSpeed * .35, 5, 10);
+        if (!impactStillMoving) w.knockedDown = false;
         if (w.backflipping && this.time - w.backflipStart > .18) w.backflipping = false;
       }
       w.state = w.grounded ? 'alive' : 'airborne';
     }
+  }
+
+  advanceTargetTraining(target) {
+    if (!this.targetTrainingActive) return false;
+    const nextStage = this.targetTrainingStage + 1;
+    if (nextStage >= this.targetTrainingTargets.length) return false;
+    this.targetTrainingStage = nextStage;
+    const position = this.targetTrainingTargets[nextStage];
+    target.hp = 40;
+    target.health.max = 40;
+    target.health.value = 40;
+    target.health.title = '40 HP';
+    target.name = `Мишень ${nextStage + 1}`;
+    target.label.querySelector('span').textContent = target.name;
+    target.body.setTranslation(position, true);
+    target.x = target.previousX = position.x;
+    target.y = target.previousY = position.y;
+    target.vx = target.vy = 0;
+    target.mesh.position.set(position.x, position.y, 0);
+    target.mesh.visible = true;
+    target.label.hidden = false;
+    return true;
   }
 
   resolveTerrainPenetration(w) {
@@ -860,7 +882,6 @@ export class Game {
   }
 
   render(dt, alpha) {
-    this.fogBackground.material.uniforms.time.value = this.time;
     const target = this.weapons.projectile || this.active;
     const smoothing = 1 - Math.exp(-5 * dt);
     this.camera.zoom += (this.zoom - this.camera.zoom) * smoothing;
@@ -898,6 +919,7 @@ export class Game {
       d.headGroup.rotation.set(p.headRotX, p.headRotY, p.headRotZ);
       const isWalking = w.grounded && Math.abs(w.vx) > 0.3;
       const isAirborne = !w.grounded;
+      const isImpactTumbling = w.knockedDown && Math.hypot(w.vx, w.vy) > .55;
       const isRecovering = w.recoveryTime > 0;
 
       // Отображение оружия у активного стрелка
@@ -939,7 +961,7 @@ export class Game {
         d.tailPivot.rotation.set(0, p.tailRotY, p.tailRotZ + flap * .12);
       } else if (isRecovering) {
         const elapsed = 1.45 - w.recoveryTime;
-        const side = -w.facing;
+        const side = w.recoverySide;
         if (elapsed < .34) {
           const impact = elapsed / .34;
           w.mesh.rotation.z = side * (1.35 - impact * .12);
@@ -967,13 +989,15 @@ export class Game {
         d.wingLPivot.rotation.z = p.wingBaseRotZ + Math.abs(wobble) * 0.3;
         d.wingRPivot.rotation.z = -p.wingBaseRotZ - Math.abs(wobble) * 0.3;
         d.bodyPivot.position.y = p.bodyPosY + Math.abs(Math.cos(step)) * 0.05;
-      } else if (isAirborne) {
+      } else if (isAirborne || isImpactTumbling) {
         const flap = Math.sin(w.animTime * 22);
         const fallRotation = -w.facing * Math.PI * .86;
         const targetRotation = w.hardFalling ? fallRotation : THREE.MathUtils.clamp(w.vy * 0.04, -0.4, 0.4);
         if (w.backflipping) {
           const flipProgress = THREE.MathUtils.clamp((this.time - w.backflipStart) / .72, 0, 1);
           w.mesh.rotation.z = -w.jumpFacing * flipProgress * Math.PI * 2;
+        } else if (w.knockedDown) {
+          w.mesh.rotation.z = w.tumbleRotation;
         } else {
           w.mesh.rotation.z += (targetRotation - w.mesh.rotation.z) * Math.min(1, dt * (w.hardFalling ? 7 : 10));
         }
@@ -1025,6 +1049,7 @@ export class Game {
       }
     }
 
+    this.updateWormLabelPositions();
     this.renderer.render(this.scene, this.camera);
     this.hudTime += dt;
     if (this.hudTime >= .05) { this.hudTime = 0; this.updateHUD(); }
@@ -1117,9 +1142,61 @@ export class Game {
 
   installUI() {
     const start = document.querySelector('#start-button');
+    start.hidden = true;
+    const modeSelect = document.createElement('div');
+    modeSelect.className = 'game-mode-select';
+    modeSelect.innerHTML = `
+      <button type="button" data-mode="training">
+        <strong>Тренировка</strong>
+        <span>Свободная практика против неподвижных мишеней</span>
+      </button>
+      <button type="button" data-mode="quick">
+        <strong>Быстрый матч</strong>
+        <span>Команда игрока против среднего бота</span>
+      </button>
+    `;
+    const trainingWeapons = [
+      ['bazooka', 'Траектория и сила выстрела'],
+      ['grenade', 'Бросок, запал и отскок'],
+      ['shotgun', 'Два точных выстрела'],
+      ['handgun', 'Серия быстрых выстрелов'],
+      ['uzi', 'Контроль очереди'],
+      ['dynamite', 'Установка и отход'],
+      ['mine', 'Ловушки и дистанция'],
+      ['sheep', 'Управляемый наземный заряд'],
+      ['airstrike', 'Выбор зоны авиаудара'],
+      ['teleport', 'Безопасное перемещение']
+    ];
+    const trainingSelect = document.createElement('div');
+    trainingSelect.className = 'training-select';
+    trainingSelect.hidden = true;
+    trainingSelect.innerHTML = '<div class="training-select-heading"><button type="button" class="training-back" aria-label="Вернуться к выбору режима">←</button><div><strong>Выберите тренировку</strong><span>Какое оружие хотите освоить?</span></div></div><div class="training-grid"></div>';
+    const trainingGrid = trainingSelect.querySelector('.training-grid');
+    const arsenalIds = Object.keys(ARSENAL);
+    for (const [id, description] of trainingWeapons) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'training-tile';
+      button.dataset.weapon = id;
+      button.setAttribute('aria-label', `${ARSENAL[id]}. ${description}`);
+      const index = arsenalIds.indexOf(id);
+      const [x, y, width, height] = WEAPON_ICON_REGIONS[index];
+      button.innerHTML = `
+        <svg class="training-weapon-icon" aria-hidden="true" viewBox="0 0 ${width} ${height}" focusable="false">
+          <svg width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" overflow="hidden">
+            <image href="${import.meta.env.BASE_URL}assets/weapon-atlas.png" width="749" height="2098"></image>
+          </svg>
+        </svg>
+        <strong>${ARSENAL[id]}</strong>
+        <span>${description}</span>
+      `;
+      trainingGrid.append(button);
+    }
     const setup = document.createElement('div');
     setup.className = 'match-setup';
+    setup.hidden = true;
     setup.innerHTML = `
+      <button type="button" class="setup-back">← К выбору режима</button>
       <div class="match-options">
         <label>Команды <input id="team-count" type="number" min="2" max="6" value="3"></label>
         <label>Червей <input id="worm-count" type="number" min="1" max="4" value="3"></label>
@@ -1131,7 +1208,7 @@ export class Game {
       </div>
       <div id="team-rows"></div>
     `;
-    start.before(setup);
+    start.before(modeSelect, trainingSelect, setup);
 
     this.teamCount = setup.querySelector('#team-count');
     this.wormCount = setup.querySelector('#worm-count');
@@ -1173,8 +1250,42 @@ export class Game {
       row.hidden = i >= 3;
       this.teamRows.append(row);
     }
-    this.teamCount.addEventListener('input', () => {
+    const syncTeamRows = () => {
       for (let i = 0; i < 6; i++) this.teamRows.children[i].hidden = i >= Math.max(2, Math.min(6, Number(this.teamCount.value) || 3));
+    };
+    this.teamCount.addEventListener('input', syncTeamRows);
+
+    const launchTraining = weapon => {
+      this.gameMode = 'training';
+      this.trainingWeapon = weapon;
+      start.click();
+    };
+    for (const button of modeSelect.querySelectorAll('button')) {
+      button.addEventListener('click', () => {
+        if (button.dataset.mode === 'training') {
+          modeSelect.hidden = true;
+          trainingSelect.hidden = false;
+        } else {
+          this.gameMode = 'quick';
+          this.trainingWeapon = null;
+          modeSelect.hidden = true;
+          setup.hidden = false;
+          start.hidden = false;
+          start.textContent = 'Начать быстрый матч';
+        }
+      });
+    }
+    for (const button of trainingGrid.querySelectorAll('[data-weapon]')) {
+      button.addEventListener('click', () => launchTraining(button.dataset.weapon));
+    }
+    trainingSelect.querySelector('.training-back').addEventListener('click', () => {
+      trainingSelect.hidden = true;
+      modeSelect.hidden = false;
+    });
+    setup.querySelector('.setup-back').addEventListener('click', () => {
+      setup.hidden = true;
+      start.hidden = true;
+      modeSelect.hidden = false;
     });
 
     this.labels = document.createElement('div');
@@ -1209,40 +1320,12 @@ export class Game {
       audioButtons.append(button);
     }
 
-    this.fogSettingsHud = document.createElement('aside');
-    this.fogSettingsHud.className = 'fog-settings-hud';
-    this.fogSettingsHud.hidden = true;
-    this.fogSettingsHud.innerHTML = `
-      <strong>Туман · временные настройки</strong>
-      <label>Скорость <output>0.90</output><input data-uniform="speed" type="range" min="0" max="3" step="0.05" value="0.9"></label>
-      <label>Размер клубов <output>1.00</output><input data-uniform="scale" type="range" min="0.3" max="2.5" step="0.05" value="1"></label>
-      <label>Яркость <output>1.00</output><input data-uniform="brightness" type="range" min="0.2" max="2" step="0.05" value="1"></label>
-      <label>Контраст <output>1.00</output><input data-uniform="contrast" type="range" min="0.2" max="2.5" step="0.05" value="1"></label>
-      <label>Затухание вверх <output>1.00</output><input data-uniform="verticalFade" type="range" min="0" max="3" step="0.05" value="1"></label>
-      <button type="button">Сбросить</button>
-    `;
-    const fogDefaults = { speed: .9, scale: 1, brightness: 1, contrast: 1, verticalFade: 1 };
-    const applyFogSetting = input => {
-      const value = Number(input.value);
-      this.fogBackground.material.uniforms[input.dataset.uniform].value = value;
-      input.parentElement.querySelector('output').value = value.toFixed(2);
-    };
-    for (const input of this.fogSettingsHud.querySelectorAll('input')) {
-      input.addEventListener('input', () => applyFogSetting(input));
-    }
-    this.fogSettingsHud.querySelector('button').addEventListener('click', () => {
-      for (const input of this.fogSettingsHud.querySelectorAll('input')) {
-        input.value = fogDefaults[input.dataset.uniform];
-        applyFogSetting(input);
-      }
-    });
-
     this.teamHealthHud = document.createElement('section');
     this.teamHealthHud.className = 'team-health-hud';
     this.teamHealthHud.hidden = true;
     this.teamHealthCards = [];
 
-    document.querySelector('#game-root').append(this.labels, this.matchHud, this.teamHealthHud, this.audioTestHud, this.fogSettingsHud);
+    document.querySelector('#game-root').append(this.labels, this.matchHud, this.teamHealthHud, this.audioTestHud);
     this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
@@ -1253,8 +1336,11 @@ export class Game {
       this.matchHud.hidden = true;
       this.teamHealthHud.hidden = true;
       this.audioTestHud.hidden = true;
-      this.fogSettingsHud.hidden = true;
       this.labels.hidden = true;
+      trainingSelect.hidden = true;
+      setup.hidden = true;
+      start.hidden = true;
+      modeSelect.hidden = false;
       document.querySelector('#start-screen').hidden = false;
       document.querySelector('#start-screen').classList.add('overlay--visible');
     });
@@ -1271,7 +1357,8 @@ export class Game {
     this.weaponPanel.refresh();
     const botThinking = this.teams[t.team]?.bot && t.state === TURN.WAITING_INPUT && this.bot.elapsed < 2;
     const turnState = botThinking ? 'ДУМАЕТ…' : t.state;
-    const text = this.winner || `${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${turnState} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
+    const trainingProgress = this.targetTrainingActive ? `Мишень ${Math.min(this.targetTrainingStage + 1, 3)}/3 · ` : '';
+    const text = this.winner || `${trainingProgress}${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${turnState} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
     const hints = { girder: 'Прицел — угол; ЛКМ — поставить в свободном месте', girderPack: 'ЛКМ — поставить балку; за ход можно поставить пять', mbBomb: 'ЛКМ — сбросить бомбу сверху', holy: 'Удерживайте пробел — сила броска; взрыв после 3 секунд и остановки', moleBomb: 'Пробел — выпустить, затем начать бурение, затем взорвать', skunk: 'Пробел — выпустить; ещё раз — выпустить газ', salvation: 'Пробел — выпустить; ещё раз — взорвать', superBanana: 'Пробел — бросить; затем разделить; затем взорвать осколки', homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель; пробел — выпустить голубя', magicBullet: 'ЛКМ — выбрать цель; пробел — выпустить волшебную пулю', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'Пробел — поднять воду и заразить незамороженных бойцов', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: '1–5 — размер стада; пробел — выпустить в выбранном направлении', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'Пробел — метеоритный дождь по всей карте', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'Прицел + пробел — зацепиться; A/D — качаться; W/S — длина; пробел — отпустить', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить, затем взлететь, затем взорвать; A/D или ←/→ — поворот', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Пробел — включить/снять; W/↑ — тяга вверх, A/D — в стороны; Enter — сбросить оружие', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
     const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте пробел / ЛКМ для силы выстрела' : 'Пробел / ЛКМ — применить оружие');
     if (this.weaponHint.textContent !== hint) this.weaponHint.textContent = hint;
@@ -1283,10 +1370,21 @@ export class Game {
       if (!card) return;
       const health = team.worms.reduce((sum, worm) => sum + worm.hp, 0);
       const maximum = Math.max(1, team.worms.length * 100);
-      card.classList.toggle('active', index === t.team);
-      card.classList.toggle('eliminated', health === 0 || team.surrendered);
-      card.querySelector('.team-health-value').textContent = String(health);
-      card.querySelector('.team-health-track i').style.width = `${health / maximum * 100}%`;
+      const active = index === t.team;
+      const eliminated = health === 0 || team.surrendered;
+      if (card.renderedActive !== active) {
+        card.renderedActive = active;
+        card.classList.toggle('active', active);
+      }
+      if (card.renderedEliminated !== eliminated) {
+        card.renderedEliminated = eliminated;
+        card.classList.toggle('eliminated', eliminated);
+      }
+      if (card.renderedHealth !== health) {
+        card.renderedHealth = health;
+        card.valueElement.textContent = String(health);
+        card.trackElement.style.width = `${health / maximum * 100}%`;
+      }
     });
 
     for (const button of this.weaponButtons) {
@@ -1295,11 +1393,6 @@ export class Game {
     }
 
     for (const w of this.worms) if (w.alive) {
-      this.vector.copy(w.mesh.position);
-      this.vector.y += 1.4;
-      this.vector.project(this.camera);
-      w.label.style.transform = `translate(${(this.vector.x * .5 + .5) * this.width}px,${(-this.vector.y * .5 + .5) * this.height}px) translate(-50%,-100%)`;
-
       const isActive = (w === this.active);
       w.label.classList.toggle('active', isActive);
 
@@ -1309,6 +1402,17 @@ export class Game {
       } else {
         w.label.style.display = 'flex';
       }
+    }
+  }
+
+  updateWormLabelPositions() {
+    for (const w of this.worms) if (w.alive && !w.label.hidden) {
+      this.vector.copy(w.mesh.position);
+      this.vector.y += 1.4;
+      this.vector.project(this.camera);
+      const x = (this.vector.x * .5 + .5) * this.width;
+      const y = (-this.vector.y * .5 + .5) * this.height;
+      w.label.style.transform = `translate3d(${x.toFixed(2)}px,${y.toFixed(2)}px,0) translate(-50%,-100%)`;
     }
   }
 }

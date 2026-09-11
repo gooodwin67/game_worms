@@ -109,6 +109,141 @@ button {
   background: linear-gradient(135deg, #65f3c0, #ffe66b);
 }
 
+.game-mode-select {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.game-mode-select button {
+  min-height: 126px;
+  padding: 18px 14px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 18px;
+  color: #fff;
+  text-align: left;
+  background: rgb(8 16 48 / 48%);
+  box-shadow: 0 10px 28px rgb(0 0 0 / 18%);
+  transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.game-mode-select button:hover,
+.game-mode-select button:focus-visible {
+  transform: translateY(-3px);
+  border-color: #65f3c0;
+  background: rgb(20 41 76 / 76%);
+}
+
+.game-mode-select strong,
+.game-mode-select span {
+  display: block;
+}
+
+.game-mode-select strong {
+  margin-bottom: 8px;
+  color: #ffe66b;
+  font-size: 18px;
+}
+
+.game-mode-select span {
+  color: #cfdaea;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.training-select {
+  margin-top: 18px;
+}
+
+.training-select-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.training-select-heading .training-back {
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
+  border: 1px solid rgb(255 255 255 / 24%);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 20px;
+  background: rgb(8 16 48 / 48%);
+}
+
+.training-select-heading strong,
+.training-select-heading span {
+  display: block;
+}
+
+.training-select-heading strong {
+  color: #ffe66b;
+  font-size: 18px;
+}
+
+.training-select-heading span {
+  margin-top: 3px;
+  color: #cfdaea;
+  font-size: 12px;
+}
+
+.training-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.training-tile {
+  min-width: 0;
+  min-height: 130px;
+  padding: 8px 6px;
+  overflow: hidden;
+  border: 1px solid rgb(255 255 255 / 20%);
+  border-radius: 12px;
+  color: #fff;
+  background: rgb(8 16 48 / 56%);
+  transition: transform .15s ease, border-color .15s ease, background .15s ease;
+}
+
+.training-tile:hover,
+.training-tile:focus-visible {
+  transform: translateY(-2px);
+  border-color: #65f3c0;
+  background: rgb(20 41 76 / 86%);
+}
+
+.training-weapon-icon {
+  display: block;
+  width: 52px;
+  height: 52px;
+  margin: 0 auto 5px;
+  overflow: hidden;
+}
+
+.training-tile strong,
+.training-tile span {
+  display: block;
+  overflow: hidden;
+}
+
+.training-tile strong {
+  color: #ffe66b;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.training-tile span {
+  margin-top: 4px;
+  color: #b9c9da;
+  font-size: 9px;
+  line-height: 1.3;
+}
+
 .loader {
   width: 42px;
   height: 42px;
@@ -167,6 +302,23 @@ button {
 }
 
 @media (max-width: 640px) {
+  .game-mode-select {
+    grid-template-columns: 1fr;
+  }
+
+  .game-mode-select button {
+    min-height: 96px;
+  }
+
+  .training-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .training-select {
+    max-height: 58dvh;
+    overflow-y: auto;
+  }
+
   .hud {
     right: max(12px, env(safe-area-inset-right));
     max-width: none;
@@ -186,6 +338,20 @@ button {
 .match-setup {
   margin: 20px 0;
   text-align: left;
+}
+
+.setup-back {
+  margin-bottom: 8px;
+  padding: 7px 10px;
+  border: 1px solid #496075;
+  border-radius: 8px;
+  color: #dcebf2;
+  background: #162c3d;
+}
+
+.setup-back:hover,
+.setup-back:focus-visible {
+  border-color: #65f3c0;
 }
 
 .match-options,
@@ -243,14 +409,16 @@ button {
 .team-health-hud {
   position: absolute;
   z-index: 5;
-  left: 50%;
+  right: 0;
+  left: 0;
   bottom: max(14px, env(safe-area-inset-bottom));
   display: flex;
   justify-content: center;
   gap: 8px;
   width: min(900px, calc(100% - 24px));
-  transform: translateX(-50%);
+  margin-inline: auto;
   pointer-events: none;
+  contain: layout paint;
 }
 
 .team-health-card {
@@ -262,8 +430,9 @@ button {
   border: 1px solid color-mix(in srgb, var(--team-color) 70%, #fff 15%);
   border-radius: 7px;
   color: #fff;
-  background: #0a1622e8;
+  background: #0a1622;
   box-shadow: 0 3px 10px #0008;
+  isolation: isolate;
 }
 
 .team-health-card.active {
@@ -373,64 +542,6 @@ button {
   background: #31596a;
 }
 
-.fog-settings-hud {
-  position: absolute;
-  z-index: 7;
-  right: max(18px, env(safe-area-inset-right));
-  bottom: max(82px, calc(env(safe-area-inset-bottom) + 66px));
-  width: 250px;
-  padding: 11px 13px;
-  border: 1px solid #77538d;
-  border-radius: 12px;
-  color: #f2eafb;
-  background: #160e24ed;
-  box-shadow: 0 8px 24px #0007;
-}
-
-.fog-settings-hud strong {
-  display: block;
-  margin-bottom: 8px;
-  font-size: 12px;
-}
-
-.fog-settings-hud label {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 2px 8px;
-  margin-top: 7px;
-  color: #d9cae8;
-  font-size: 11px;
-}
-
-.fog-settings-hud output {
-  color: #e284ff;
-  font-variant-numeric: tabular-nums;
-}
-
-.fog-settings-hud input {
-  grid-column: 1 / -1;
-  width: 100%;
-  accent-color: #bd35eb;
-}
-
-.fog-settings-hud button {
-  width: 100%;
-  margin-top: 10px;
-  padding: 6px 8px;
-  border: 1px solid #77538d;
-  border-radius: 6px;
-  color: #f2eafb;
-  background: #39204b;
-  cursor: pointer;
-}
-
-.fog-settings-hud button:hover,
-.fog-settings-hud button:focus-visible {
-  border-color: #e284ff;
-  background: #512b68;
-}
-
 .match-status {
   font-size: 14px;
   font-weight: 700;
@@ -535,26 +646,6 @@ button {
 
 .worm-label progress::-moz-progress-bar {
   background: #ff3344;
-}
-
-.worm-label.active span {
-  /* border-color: #ffd166; */
-  /* color: #fff275; */
-  /* box-shadow: 0 0 8px rgba(255, 209, 102, 0.7); */
-  animation: worm-label-glow 0.5s ease-in-out infinite alternate;
-
-}
-
-@keyframes worm-label-glow {
-  0% {
-    /* color: #fffefe; */
-    transform: translateY(0px) scale(1, 1);
-  }
-
-  100% {
-    /* color: #101E30; */
-    transform: translateY(-6px) scale(1.35, 1.35);
-  }
 }
 
 .worm-label.active progress {

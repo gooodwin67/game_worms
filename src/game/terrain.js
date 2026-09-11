@@ -237,6 +237,50 @@ export class Terrain {
     return (centerY || (MAP.height - targetRow / this.scale + halfHeight + radius)) + 0.002;
   }
 
+  findPlatformTops(minPixels = 800) {
+    const width = this.canvas.width, height = this.canvas.height;
+    const data = this.ctx.getImageData(0, 0, width, height).data;
+    const visited = new Uint8Array(width * height);
+    const regions = [];
+    const solid = index => data[index * 4 + 3] >= 128;
+
+    for (let start = 0; start < visited.length; start++) {
+      if (visited[start] || !solid(start)) continue;
+      const queue = [start];
+      visited[start] = 1;
+      const add = next => {
+        if (visited[next] || !solid(next)) return;
+        visited[next] = 1;
+        queue.push(next);
+      };
+      let head = 0, count = 0;
+      let minX = width, maxX = 0, minY = height, maxY = 0;
+      while (head < queue.length) {
+        const index = queue[head++], x = index % width, y = Math.floor(index / width);
+        count++;
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        if (x > 0) add(index - 1);
+        if (x + 1 < width) add(index + 1);
+        if (y > 0) add(index - width);
+        if (y + 1 < height) add(index + width);
+      }
+      if (count < minPixels) continue;
+
+      const centerPixel = Math.round((minX + maxX) / 2);
+      let surfaceRow = minY;
+      for (let y = minY; y <= maxY; y++) {
+        if (solid(y * width + centerPixel)) { surfaceRow = y; break; }
+      }
+      regions.push({
+        x: (centerPixel + .5) / this.scale,
+        surfaceY: MAP.height - surfaceRow / this.scale,
+        width: (maxX - minX + 1) / this.scale
+      });
+    }
+    return regions.sort((a, b) => a.x - b.x);
+  }
+
   captureCollisionMask() {
     return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
   }
