@@ -316,8 +316,8 @@ export class Weapons {
     if(type==='skunk')this.hazards.push({kind:'poison',x,y,radius:3.5,damage:5,remaining:8,tick:.2});
   }
   explode(x,y,r,damage){
-    const g=this.g;g.createExplosion(x,y,r);g.particles.emit(x,y,r);
-    for(const w of g.worms)if(w.alive){const pos=w.body.translation(),dx=pos.x-x,dy=pos.y-y,d=Math.hypot(dx,dy),reach=r*1.8;if(d>reach)continue;const f=1-d/reach;g.damage(w,Math.ceil(damage*f));if(w.alive&&!w.frozen)w.body.applyImpulse({x:dx/Math.max(d,.2)*f*9,y:(dy/Math.max(d,.2)+.6)*f*9},true);}
+    const g=this.g,colors=g.createExplosion(x,y,r);g.particles.emit(x,y,r,colors);
+    for(const w of g.worms)if(w.alive){const pos=w.body.translation(),dx=pos.x-x,dy=pos.y-y,d=Math.hypot(dx,dy),reach=r*1.8;if(d>reach)continue;const f=1-d/reach;g.damage(w,Math.ceil(damage*f));if(w.alive&&!w.frozen){const impulse=13.5*Math.pow(f,.75),distance=Math.max(d,.2);w.body.applyImpulse({x:dx/distance*impulse,y:(dy/distance+.72)*impulse},true);w.slideTime=Math.max(w.slideTime,1.2);}}
     for(const p of this.pool)if(p.active&&p.type==='mine'&&Math.hypot(p.x-x,p.y-y)<r*1.5){p.triggered=true;p.remaining=Math.min(p.remaining,.2);}
   }
   fireGun(type){

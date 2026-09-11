@@ -4,6 +4,14 @@ export const TURN = Object.freeze({ WAITING_INPUT: 'WAITING_INPUT', CHARGING_SHO
 export const GRAVITY = -12;
 export const WIND_MAX = 3;
 export const COLORS = [0x55d9ba, 0xff867b, 0xa995ff, 0xffd166, 0x63c5ff, 0xf58cda];
+const shuffledIndexes = length => {
+  const result = Array.from({ length }, (_, index) => index);
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+};
 export class GameLoop {
   constructor(update, render) {
     this.update = update; this.render = render; this.running = false; this.accumulator = 0;
@@ -19,7 +27,19 @@ export class GameLoop {
   }
 }
 export class TurnMachine {
-  constructor(game) { this.game = game; this.team = -1; this.cursors = game.teams.map(() => -1); this.state = TURN.NEXT_TURN; this.remaining = 45; this.charge = 0; this.still = 0; this.shots = 2; this.weapon = 'bazooka'; }
+  constructor(game) {
+    this.game = game;
+    this.team = -1;
+    this.teamOrder = shuffledIndexes(game.teams.length);
+    this.wormOrders = game.teams.map(team => shuffledIndexes(team.worms.length));
+    this.cursors = game.teams.map(() => -1);
+    this.state = TURN.NEXT_TURN;
+    this.remaining = 45;
+    this.charge = 0;
+    this.still = 0;
+    this.shots = 2;
+    this.weapon = 'bazooka';
+  }
   next() {
     const g = this.game;
     g.weapons.endUtility();
@@ -29,10 +49,24 @@ export class TurnMachine {
     this.lockedWeapon = null;
     let survivors = 0, winner = null;
     for (const team of g.teams) if (!team.surrendered && team.worms.some(w => w.alive)) { survivors++; winner = team; }
-    if (survivors <= 1) { g.winner = winner ? `${winner.name} побеждает!` : 'Ничья'; return; }
-    do { this.team = (this.team + 1) % g.teams.length; } while (g.teams[this.team].surrendered || !g.teams[this.team].worms.some(w => w.alive));
+    if (survivors <= 1) {
+      g.winningTeam = winner ? g.teams.indexOf(winner) : null;
+      g.victoryTime = 0;
+      g.winner = winner ? `${winner.name} побеждает!` : 'Ничья';
+      return;
+    }
+    let teamOrderIndex = this.teamOrder.indexOf(this.team);
+    do {
+      teamOrderIndex = (teamOrderIndex + 1) % this.teamOrder.length;
+      this.team = this.teamOrder[teamOrderIndex];
+    } while (g.teams[this.team].surrendered || !g.teams[this.team].worms.some(w => w.alive));
     const worms = g.teams[this.team].worms;
-    do { this.cursors[this.team] = (this.cursors[this.team] + 1) % worms.length; } while (!worms[this.cursors[this.team]].alive);
+    const wormOrder = this.wormOrders[this.team];
+    let wormOrderIndex = wormOrder.indexOf(this.cursors[this.team]);
+    do {
+      wormOrderIndex = (wormOrderIndex + 1) % wormOrder.length;
+      this.cursors[this.team] = wormOrder[wormOrderIndex];
+    } while (!worms[this.cursors[this.team]].alive);
     g.active = worms[this.cursors[this.team]];
     g.activeMoved = false; // <-- Сбрасываем флаг движения для нового хода
     g.wind = (Math.random() * 2 - 1) * WIND_MAX;

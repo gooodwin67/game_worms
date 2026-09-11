@@ -319,6 +319,8 @@ export class Game {
     this.teams = [];
     this.wormByCollider = new Map();
     this.winner = null;
+    this.winningTeam = null;
+    this.victoryTime = 0;
     this.active = null;
     this.waterLevel = 0;
     this.time = 0;
@@ -328,6 +330,16 @@ export class Game {
     const count = Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
       perTeam = Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
     const rows = this.teamRows.children;
+    const spawnCount = count * perTeam;
+    const spawnSegment = (MAP.width - 10) / spawnCount;
+    const spawnXs = Array.from({ length: spawnCount }, (_, index) =>
+      5 + (index + .18 + Math.random() * .64) * spawnSegment
+    );
+    for (let i = spawnXs.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [spawnXs[i], spawnXs[j]] = [spawnXs[j], spawnXs[i]];
+    }
+    let spawnIndex = 0;
 
     // Перемешиваем пул имён для матча без повторов
     const availableNames = [...WORM_NAMES].sort(() => Math.random() - 0.5);
@@ -336,11 +348,11 @@ export class Game {
     for (let t = 0; t < count; t++) {
       const name = rows[t].querySelector('input').value.trim() || `Команда ${t + 1}`,
         bot = rows[t].querySelector('select').value;
-      const team = { name, bot, worms: [] };
+      const team = { name, bot, color: COLORS[t], worms: [] };
       this.teams.push(team);
 
       for (let i = 0; i < perTeam; i++) {
-        const x = 5 + (i * count + t) * (MAP.width - 10) / Math.max(1, count * perTeam - 1),
+        const x = spawnXs[spawnIndex++],
           y = this.terrain.spawnHeight(x);
         const body = this.world.createRigidBody(
           RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y).lockRotations().setLinearDamping(.12).setCcdEnabled(true)
@@ -380,8 +392,10 @@ export class Game {
           name: wormName,
           hp: 100, alive: true, state: 'airborne', facing: 1, slideTime: 0, speedBoost: false, invisible: false, frozen: false, poison: 0, radiation: 0,
           x, y, previousX: x, previousY: y, vx: 0, vy: 0,
-          grounded: false, airborneTime: 0, groundNormalX: 0, groundNormalY: 1,
-          animTime: Math.random() * 5
+          grounded: false, airborneTime: 0, airbornePeakY: y, hardFalling: false, recoveryTime: 0, groundNormalX: 0, groundNormalY: 1,
+          animTime: Math.random() * 5,
+          victoryPhase: Math.random() * Math.PI * 2,
+          jumpTapTime: -Infinity, backflipEligibleUntil: -Infinity, backflipRequested: false, backflipStart: -Infinity, backflipping: false, jumpFacing: 1
         };
 
         this.worms.push(worm);
@@ -390,7 +404,7 @@ export class Game {
       }
     }
 
-
+    this.rebuildTeamHealthHud();
 
     this.groundRay = new RAPIER.Ray({ x: 0, y: 0 }, { x: 0, y: -1 });
     this.contactNormal = { x: 0, y: 0 };
@@ -418,7 +432,7 @@ export class Game {
     for (const w of this.worms) {
       w.body.setLinvel(this.motion, false);
       w.body.sleep();
-      w.vx = 0; w.vy = 0; w.slideTime = 0; w.grounded = true; w.state = 'alive';
+      w.vx = 0; w.vy = 0; w.slideTime = 0; w.grounded = true; w.airborneTime = 0; w.airbornePeakY = w.y; w.hardFalling = false; w.recoveryTime = 0; w.state = 'alive';
       w.previousX = w.x; w.previousY = w.y;
       w.mesh.position.set(w.x, w.y, 0);
     }
@@ -538,7 +552,20 @@ export class Game {
     }
   }
 
-  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.terrain.createExplosion(x, y, radius); for (const w of this.worms) if (w.alive) w.body.wakeUp(); }
+  rebuildTeamHealthHud() {
+    this.teamHealthHud.replaceChildren();
+    this.teamHealthCards = this.teams.map((team) => {
+      const card = document.createElement('div');
+      card.className = 'team-health-card';
+      card.style.setProperty('--team-color', `#${team.color.toString(16).padStart(6, '0')}`);
+      card.innerHTML = '<span class="team-health-name"></span><strong class="team-health-value"></strong><div class="team-health-track"><i></i></div>';
+      card.querySelector('.team-health-name').textContent = team.name;
+      this.teamHealthHud.append(card);
+      return card;
+    });
+  }
+
+  createExplosion(x, y, radius) { this.audio?.play('explosion'); const colors = this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
   damage(w, amount, force = false) {
     if (!w.alive || (w.frozen && !force)) return;
     w.hp = Math.max(0, w.hp - amount);
@@ -554,7 +581,7 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
+  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
   pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
@@ -563,15 +590,19 @@ export class Game {
   update(dt) {
     this.time += dt;
     this.particles.update(this.time);
-    if (!this.winner) { this.turn.update(dt); this.bot.update(dt); }
+    for (const worm of this.worms) worm.recoveryTime = Math.max(0, worm.recoveryTime - dt);
+    if (this.winner) this.victoryTime += dt;
+    else { this.turn.update(dt); this.bot.update(dt); }
 
-    if (this.humanInput() && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
+    if (this.humanInput() && this.active.recoveryTime <= 0 && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
 
       const w = this.active,
         direction = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
       const jump = this.keys.delete('KeyW');
+      const backflip = w.backflipRequested && this.time <= w.backflipEligibleUntil && !this.weapons.movementMode;
+      w.backflipRequested = false;
       // Если боец пошёл, прыгнул или начал заряжать выстрел — скрываем плашку
-      if (direction !== 0 || jump || this.turn.state === TURN.CHARGING_SHOT) {
+      if (direction !== 0 || jump || backflip || this.turn.state === TURN.CHARGING_SHOT) {
         this.activeMoved = true;
       }
 
@@ -582,7 +613,18 @@ export class Game {
         w.facing = direction;
         if (Math.cos(this.angle) * direction < 0) this.angle = Math.PI - this.angle;
       }
-      if (w.grounded) {
+      if (backflip) {
+        this.audio?.play('jump');
+        this.footstepTimer = 0;
+        w.airbornePeakY = w.y;
+        w.backflipping = true;
+        w.backflipStart = this.time;
+        w.backflipEligibleUntil = -Infinity;
+        this.motion.x = -w.jumpFacing * 2.25;
+        this.motion.y = 7.6;
+        w.body.setLinvel(this.motion, true);
+        w.grounded = false;
+      } else if (w.grounded) {
         if (direction) {
           this.footstepTimer -= dt;
           if (this.footstepTimer <= 0) { this.audio?.play('footstep'); this.footstepTimer = w.speedBoost ? .18 : .28; }
@@ -595,6 +637,9 @@ export class Game {
         if (jump) {
           this.audio?.play('jump');
           this.footstepTimer = 0;
+          w.airbornePeakY = w.y;
+          w.jumpFacing = w.facing;
+          w.backflipEligibleUntil = this.time + .38;
           this.motion.x = w.facing * 3.8 + w.vx * .25;
           this.motion.y = 5.8;
           w.body.setLinvel(this.motion, true);
@@ -651,6 +696,7 @@ export class Game {
   syncWorms(dt = 0) {
     for (const w of this.worms) if (w.alive) {
       const wasGrounded = w.grounded, fallSpeed = w.vy;
+      this.resolveTerrainPenetration(w);
       const p = w.body.translation(), v = w.body.linvel();
       w.x = p.x; w.y = p.y; w.vx = v.x; w.vy = v.y;
       if (w.y < -3 || w.x < -3 || w.x > MAP.width + 3) { this.damage(w, w.hp, true); continue; }
@@ -678,16 +724,48 @@ export class Game {
       }
       if (!w.grounded) {
         w.airborneTime += dt;
+        w.airbornePeakY = Math.max(w.airbornePeakY, w.y);
+        w.hardFalling = w.airborneTime >= .4 && (w.airbornePeakY - w.y >= 3.5 || w.vy < -5.5);
       } else {
         const wasActuallyAirborne = !wasGrounded && w.airborneTime >= .4;
+        const hardLanding = wasActuallyAirborne && (w.airbornePeakY - w.y >= 3.5 || fallSpeed < -5.5);
         if (wasActuallyAirborne && fallSpeed < -2) {
           w.slideTime = .45;
+        }
+        if (hardLanding) {
+          w.recoveryTime = 1.45;
           this.audio?.play('landing');
         }
         w.airborneTime = 0;
+        w.airbornePeakY = w.y;
+        w.hardFalling = false;
+        if (w.backflipping && this.time - w.backflipStart > .18) w.backflipping = false;
       }
       w.state = w.grounded ? 'alive' : 'airborne';
     }
+  }
+
+  resolveTerrainPenetration(w) {
+    const position = w.body.translation();
+    const embedded = this.terrain.isSolid(position.x, position.y) ||
+      this.terrain.isSolid(position.x - .27, position.y - .12) ||
+      this.terrain.isSolid(position.x + .27, position.y - .12) ||
+      this.terrain.isSolid(position.x, position.y + .32);
+    if (!embedded) return false;
+
+    const samples = [[0, .34], [-.28, .14], [.28, .14], [-.3, -.12], [.3, -.12], [0, -.49]];
+    const isClear = y => samples.every(([dx, dy]) => !this.terrain.isSolid(position.x + dx, y + dy));
+    const step = 1 / MAP.pixelsPerUnit;
+    for (let lift = step; lift <= 2.5; lift += step) {
+      if (!isClear(position.y + lift)) continue;
+      w.body.setTranslation({ x: position.x, y: position.y + lift + .03 }, true);
+      const velocity = w.body.linvel();
+      w.body.setLinvel({ x: velocity.x, y: Math.max(0, velocity.y) }, true);
+      w.body.wakeUp();
+      w.grounded = false;
+      return true;
+    }
+    return false;
   }
 
   render(dt, alpha) {
@@ -709,6 +787,7 @@ export class Game {
     // Процедурные анимации для каждой утки
     // Процедурные анимации и оружие для каждой утки
     for (const w of this.worms) if (w.alive) {
+      const isWinningWorm = this.winner && this.winningTeam === w.team;
       w.mesh.visible = !w.invisible || w === this.active;
       w.label.hidden = w.invisible && w !== this.active;
       w.animTime += dt;
@@ -717,15 +796,20 @@ export class Game {
       w.mesh.position.set(posX, posY, 0);
 
       // Разворот в сторону взгляда
-      w.duck.root.scale.x = Math.abs(w.duck.root.scale.x) * w.facing;
+      w.duck.root.scale.x = Math.abs(w.duck.root.scale.x) * (isWinningWorm ? 1 : w.facing);
 
       const d = w.duck;
       const p = DUCK_PARAMS;
+      d.bodyPivot.scale.set(1, 1, 1);
+      d.bodyPivot.position.y = p.bodyPosY;
+      d.headGroup.position.y = p.headPosY;
+      d.headGroup.rotation.set(p.headRotX, p.headRotY, p.headRotZ);
       const isWalking = w.grounded && Math.abs(w.vx) > 0.3;
       const isAirborne = !w.grounded;
+      const isRecovering = w.recoveryTime > 0;
 
       // Отображение оружия у активного стрелка
-      const isShootingActive = (w === this.active) &&
+      const isShootingActive = !this.winner && (w === this.active) && !isRecovering &&
         (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT);
 
       if (isShootingActive) {
@@ -750,7 +834,39 @@ export class Game {
       }
 
       // Состояния анимации утки
-      if (isWalking) {
+      if (isWinningWorm) {
+        const jump = Math.abs(Math.sin(this.victoryTime * 4.4 + w.victoryPhase));
+        const flap = Math.sin(this.victoryTime * 18 + w.victoryPhase * 1.7);
+        w.mesh.position.y += jump * .72;
+        w.mesh.rotation.z = Math.sin(this.victoryTime * 8.8 + w.victoryPhase) * .07;
+        d.headGroup.rotation.set(0, 0, 0);
+        d.headGroup.position.y = p.headPosY + jump * .08;
+        d.bodyPivot.scale.set(1 + jump * .05, 1 - jump * .08, 1 + jump * .05);
+        d.wingLPivot.rotation.set(.18, p.wingBaseRotY, p.wingBaseRotZ + flap * 1.05);
+        d.wingRPivot.rotation.set(-.18, -p.wingBaseRotY, -p.wingBaseRotZ - flap * 1.05);
+        d.tailPivot.rotation.set(0, p.tailRotY, p.tailRotZ + flap * .12);
+      } else if (isRecovering) {
+        const elapsed = 1.45 - w.recoveryTime;
+        const side = -w.facing;
+        if (elapsed < .34) {
+          const impact = elapsed / .34;
+          w.mesh.rotation.z = side * (1.35 - impact * .12);
+          d.bodyPivot.scale.set(1.08, .78, 1.08);
+          d.headGroup.position.y = p.headPosY - .18;
+        } else if (elapsed < .92) {
+          const rise = THREE.MathUtils.smoothstep(elapsed, .34, .92);
+          w.mesh.rotation.z = side * 1.23 * (1 - rise);
+          d.bodyPivot.scale.set(1.08 - rise * .08, .78 + rise * .22, 1.08 - rise * .08);
+          d.headGroup.position.y = p.headPosY - .18 * (1 - rise);
+        } else {
+          const settle = (elapsed - .92) / .53;
+          w.mesh.rotation.z = Math.sin(elapsed * 38) * .13 * (1 - settle);
+          d.bodyPivot.scale.set(1, 1, 1);
+          d.headGroup.position.y = p.headPosY + Math.sin(elapsed * 24) * .035 * (1 - settle);
+          d.wingLPivot.rotation.z = p.wingBaseRotZ + Math.sin(elapsed * 31) * .5 * (1 - settle);
+          d.wingRPivot.rotation.z = -p.wingBaseRotZ - Math.sin(elapsed * 31) * .5 * (1 - settle);
+        }
+      } else if (isWalking) {
         const step = w.animTime * 11;
         const wobble = Math.sin(step);
         w.mesh.rotation.z = wobble * 0.12;
@@ -761,7 +877,14 @@ export class Game {
         d.bodyPivot.position.y = p.bodyPosY + Math.abs(Math.cos(step)) * 0.05;
       } else if (isAirborne) {
         const flap = Math.sin(w.animTime * 22);
-        w.mesh.rotation.z = THREE.MathUtils.clamp(w.vy * 0.04, -0.4, 0.4);
+        const fallRotation = -w.facing * Math.PI * .86;
+        const targetRotation = w.hardFalling ? fallRotation : THREE.MathUtils.clamp(w.vy * 0.04, -0.4, 0.4);
+        if (w.backflipping) {
+          const flipProgress = THREE.MathUtils.clamp((this.time - w.backflipStart) / .72, 0, 1);
+          w.mesh.rotation.z = -w.jumpFacing * flipProgress * Math.PI * 2;
+        } else {
+          w.mesh.rotation.z += (targetRotation - w.mesh.rotation.z) * Math.min(1, dt * (w.hardFalling ? 7 : 10));
+        }
         d.wingLPivot.rotation.z = p.wingBaseRotZ + flap * 0.85;
         d.wingRPivot.rotation.z = -p.wingBaseRotZ - flap * 0.85;
         d.wingLPivot.rotation.x = 0.2;
@@ -840,6 +963,11 @@ export class Game {
       if (['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
+      if (e.code === 'KeyW') {
+        const w = this.active;
+        if (w && this.time - w.jumpTapTime <= .38) w.backflipRequested = true;
+        if (w) w.jumpTapTime = this.time;
+      }
       if (e.code === 'Space') { if (!this.weapons.remote()) this.turn.beginCharge(); }
       if (e.code === 'Enter') this.weapons.dropWeapon();
       if (/Digit[1-5]/.test(e.code) && this.turn.state === TURN.WAITING_INPUT) {
@@ -964,7 +1092,7 @@ export class Game {
     this.matchHud = document.createElement('section');
     this.matchHud.className = 'match-hud';
     this.matchHud.hidden = true;
-    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · A/D — ходить · W — прыжок · мышь / ↑↓ — прицел · пробел / ЛКМ — огонь · 1–5 — запал</p>';
+    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · A/D — ходить · W — прыжок · дважды W — сальто назад · мышь / ↑↓ — прицел · пробел / ЛКМ — огонь · 1–5 — запал</p>';
     this.weaponPanel = new WeaponPanel(this, this.matchHud.querySelector('.arsenal-toggle'));
 
     const hint = document.createElement('p');
@@ -989,7 +1117,12 @@ export class Game {
       audioButtons.append(button);
     }
 
-    document.querySelector('#game-root').append(this.labels, this.matchHud, this.audioTestHud);
+    this.teamHealthHud = document.createElement('section');
+    this.teamHealthHud.className = 'team-health-hud';
+    this.teamHealthHud.hidden = true;
+    this.teamHealthCards = [];
+
+    document.querySelector('#game-root').append(this.labels, this.matchHud, this.teamHealthHud, this.audioTestHud);
     this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
@@ -998,6 +1131,7 @@ export class Game {
       this.pause();
       this.inMenu = true;
       this.matchHud.hidden = true;
+      this.teamHealthHud.hidden = true;
       this.audioTestHud.hidden = true;
       this.labels.hidden = true;
       document.querySelector('#start-screen').hidden = false;
@@ -1014,12 +1148,25 @@ export class Game {
   updateHUD() {
     const t = this.turn;
     this.weaponPanel.refresh();
-    const text = this.winner || `${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${t.state} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
+    const botThinking = this.teams[t.team]?.bot && t.state === TURN.WAITING_INPUT && this.bot.elapsed < 2;
+    const turnState = botThinking ? 'ДУМАЕТ…' : t.state;
+    const text = this.winner || `${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${turnState} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
     const hints = { girder: 'Прицел — угол; ЛКМ — поставить в свободном месте', girderPack: 'ЛКМ — поставить балку; за ход можно поставить пять', mbBomb: 'ЛКМ — сбросить бомбу сверху', holy: 'Удерживайте пробел — сила броска; взрыв после 3 секунд и остановки', moleBomb: 'Пробел — выпустить, затем начать бурение, затем взорвать', skunk: 'Пробел — выпустить; ещё раз — выпустить газ', salvation: 'Пробел — выпустить; ещё раз — взорвать', superBanana: 'Пробел — бросить; затем разделить; затем взорвать осколки', homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель; пробел — выпустить голубя', magicBullet: 'ЛКМ — выбрать цель; пробел — выпустить волшебную пулю', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'Пробел — поднять воду и заразить незамороженных бойцов', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: '1–5 — размер стада; пробел — выпустить в выбранном направлении', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'Пробел — метеоритный дождь по всей карте', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'Прицел + пробел — зацепиться; A/D — качаться; W/S — длина; пробел — отпустить', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить, затем взлететь, затем взорвать; A/D или ←/→ — поворот', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Пробел — включить/снять; W/↑ — тяга вверх, A/D — в стороны; Enter — сбросить оружие', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
     const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте пробел / ЛКМ для силы выстрела' : 'Пробел / ЛКМ — применить оружие');
     if (this.weaponHint.textContent !== hint) this.weaponHint.textContent = hint;
     if (this.status.textContent !== text) this.status.textContent = text;
     this.chargeBar.value = t.charge;
+
+    this.teams.forEach((team, index) => {
+      const card = this.teamHealthCards[index];
+      if (!card) return;
+      const health = team.worms.reduce((sum, worm) => sum + worm.hp, 0);
+      const maximum = Math.max(1, team.worms.length * 100);
+      card.classList.toggle('active', index === t.team);
+      card.classList.toggle('eliminated', health === 0 || team.surrendered);
+      card.querySelector('.team-health-value').textContent = String(health);
+      card.querySelector('.team-health-track i').style.width = `${health / maximum * 100}%`;
+    });
 
     for (const button of this.weaponButtons) {
       button.classList.toggle('selected', button.dataset.weapon === t.weapon);

@@ -237,6 +237,18 @@ export class Terrain {
     return (centerY || (MAP.height - targetRow / this.scale + halfHeight + radius)) + 0.002;
   }
 
+  captureCollisionMask() {
+    return this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
+  }
+
+  isSolid(x, y, mask = null) {
+    const px = Math.floor(x * this.scale), py = Math.floor((MAP.height - y) * this.scale);
+    if (px < 0 || py < 0 || px >= this.canvas.width || py >= this.canvas.height) return false;
+    const image = mask || this.ctx.getImageData(px, py, 1, 1);
+    const offset = mask ? (py * mask.width + px) * 4 + 3 : 3;
+    return image.data[offset] >= 128;
+  }
+
   rebuild(cx, cy) {
     const list = this.chunks[cy * this.columns + cx];
     for (const collider of list) this.world.removeCollider(collider, true);
@@ -263,6 +275,31 @@ export class Terrain {
     if (!(radius > 0) || !Number.isFinite(x + y + radius)) return;
     const px = x * this.scale, py = (MAP.height - y) * this.scale, r = radius * this.scale;
     const c = this.ctx;
+    const left = Math.max(0, Math.floor(px - r));
+    const top = Math.max(0, Math.floor(py - r));
+    const right = Math.min(this.canvas.width, Math.ceil(px + r));
+    const bottom = Math.min(this.canvas.height, Math.ceil(py + r));
+    const colors = [];
+    if (right > left && bottom > top) {
+      const image = c.getImageData(left, top, right - left, bottom - top);
+      const stride = Math.max(1, Math.floor(Math.sqrt(image.width * image.height / 24)));
+      for (let sy = 0; sy < image.height && colors.length < 24; sy += stride) {
+        for (let sx = 0; sx < image.width && colors.length < 24; sx += stride) {
+          const worldX = left + sx - px, worldY = top + sy - py;
+          if (worldX * worldX + worldY * worldY > r * r) continue;
+          const offset = (sy * image.width + sx) * 4;
+          if (image.data[offset + 3] < 128) continue;
+          colors.push([image.data[offset] / 255, image.data[offset + 1] / 255, image.data[offset + 2] / 255]);
+        }
+      }
+    }
+    if (!this.hasCustomImage) {
+      colors.length = 0;
+      const soil = [[.35, .22, .16], [.42, .28, .19], [.52, .35, .24], [.30, .19, .14]];
+      const grass = [[.24, .65, .22], [.34, .74, .26], [.48, .85, .32]];
+      const nearSurface = y + radius >= this.surface(x) - 1.5;
+      colors.push(...soil, ...(nearSurface ? grass : []));
+    }
     c.globalCompositeOperation = 'destination-out';
     c.beginPath();
     c.arc(px, py, r, 0, Math.PI * 2);
@@ -277,6 +314,7 @@ export class Terrain {
         if (dx * dx + dy * dy <= (r + 1) * (r + 1)) this.rebuild(cx, cy);
       }
     }
+    return colors;
   }
 
   createGirder(x, y, angle, length) {
