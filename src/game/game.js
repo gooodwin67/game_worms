@@ -84,6 +84,9 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
+    this.fogBackground = this.createFogBackground();
+    this.scene.add(this.fogBackground);
+
     this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.footstepTimer = 0; this.lowGravity = false;
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
     this.inMenu = true; this.installUI(); this.bindInput();
@@ -91,6 +94,94 @@ export class Game {
 
 
   createWeaponMesh(type) { return this.weaponArt.create(type); }
+
+  createFogBackground() {
+    const material = new THREE.ShaderMaterial({
+      uniforms: {
+        time: { value: 0 },
+        speed: { value: .9 },
+        scale: { value: 1 },
+        brightness: { value: 1 },
+        contrast: { value: 1 },
+        verticalFade: { value: 1 }
+      },
+      depthTest: false,
+      depthWrite: false,
+      vertexShader: `
+        varying vec2 vUv;
+        void main() {
+          vUv = uv;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+      `,
+      fragmentShader: `
+        precision highp float;
+        varying vec2 vUv;
+        uniform float time;
+        uniform float speed;
+        uniform float scale;
+        uniform float brightness;
+        uniform float contrast;
+        uniform float verticalFade;
+
+        float hash(vec2 p) {
+          return fract(cos(dot(p, vec2(12.9898, 4.1414))) * 43758.5453);
+        }
+
+        float noise(vec2 p) {
+          vec2 cell = floor(p);
+          vec2 local = fract(p);
+          local = smoothstep(vec2(0.0), vec2(1.0), local);
+          float a = hash(cell);
+          float b = hash(cell + vec2(1.0, 0.0));
+          float c = hash(cell + vec2(0.0, 1.0));
+          float d = hash(cell + vec2(1.0, 1.0));
+          return mix(mix(a, b, local.x), mix(c, d, local.x), local.y);
+        }
+
+        float fbm(vec2 p) {
+          float value = 0.0;
+          float amplitude = 1.0;
+          for (int i = 0; i < 4; i++) {
+            value += noise(p) * amplitude;
+            p *= 2.0;
+            amplitude *= 0.5;
+          }
+          return value;
+        }
+
+        void main() {
+          vec2 p = vUv * vec2(8.0, 3.65) * scale;
+          float animatedTime = time * speed;
+          float q = fbm(p - animatedTime * 0.1);
+          vec2 r = vec2(
+            fbm(p + q + animatedTime * 0.7 - p.x - p.y),
+            fbm(p + q - animatedTime * 0.4)
+          );
+
+          vec3 magentaDark = vec3(0.494, 0.0, 0.38);
+          vec3 magenta = vec3(0.678, 0.0, 0.633);
+          vec3 redShadow = vec3(0.2, 0.0, 0.0);
+          vec3 violet = vec3(0.643, 0.004, 0.841);
+          vec3 color = mix(magentaDark, magenta, fbm(p + r));
+          color += mix(redShadow, violet, r.x);
+          color -= mix(vec3(0.1), vec3(0.9), r.y);
+
+          float fade = pow(max(0.0, 1.0 - vUv.y), verticalFade);
+          color *= cos(1.6 * vUv.y) * fade;
+          color = (color - vec3(0.25)) * contrast + vec3(0.25);
+          color *= brightness;
+          color = max(color, vec3(0.0));
+          gl_FragColor = vec4(color, 1.0);
+        }
+      `
+    });
+    const background = new THREE.Mesh(new THREE.PlaneGeometry(170, 100), material);
+    background.position.set(MAP.width / 2, MAP.height / 2, -20);
+    background.frustumCulled = false;
+    background.renderOrder = -100;
+    return background;
+  }
 
   // Фабрика сборки 3D-персонажа (Боевая утка)
   createDuck(teamColor) {
@@ -581,7 +672,7 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
+  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.fogSettingsHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
   pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
@@ -769,6 +860,7 @@ export class Game {
   }
 
   render(dt, alpha) {
+    this.fogBackground.material.uniforms.time.value = this.time;
     const target = this.weapons.projectile || this.active;
     const smoothing = 1 - Math.exp(-5 * dt);
     this.camera.zoom += (this.zoom - this.camera.zoom) * smoothing;
@@ -1117,12 +1209,40 @@ export class Game {
       audioButtons.append(button);
     }
 
+    this.fogSettingsHud = document.createElement('aside');
+    this.fogSettingsHud.className = 'fog-settings-hud';
+    this.fogSettingsHud.hidden = true;
+    this.fogSettingsHud.innerHTML = `
+      <strong>Туман · временные настройки</strong>
+      <label>Скорость <output>0.90</output><input data-uniform="speed" type="range" min="0" max="3" step="0.05" value="0.9"></label>
+      <label>Размер клубов <output>1.00</output><input data-uniform="scale" type="range" min="0.3" max="2.5" step="0.05" value="1"></label>
+      <label>Яркость <output>1.00</output><input data-uniform="brightness" type="range" min="0.2" max="2" step="0.05" value="1"></label>
+      <label>Контраст <output>1.00</output><input data-uniform="contrast" type="range" min="0.2" max="2.5" step="0.05" value="1"></label>
+      <label>Затухание вверх <output>1.00</output><input data-uniform="verticalFade" type="range" min="0" max="3" step="0.05" value="1"></label>
+      <button type="button">Сбросить</button>
+    `;
+    const fogDefaults = { speed: .9, scale: 1, brightness: 1, contrast: 1, verticalFade: 1 };
+    const applyFogSetting = input => {
+      const value = Number(input.value);
+      this.fogBackground.material.uniforms[input.dataset.uniform].value = value;
+      input.parentElement.querySelector('output').value = value.toFixed(2);
+    };
+    for (const input of this.fogSettingsHud.querySelectorAll('input')) {
+      input.addEventListener('input', () => applyFogSetting(input));
+    }
+    this.fogSettingsHud.querySelector('button').addEventListener('click', () => {
+      for (const input of this.fogSettingsHud.querySelectorAll('input')) {
+        input.value = fogDefaults[input.dataset.uniform];
+        applyFogSetting(input);
+      }
+    });
+
     this.teamHealthHud = document.createElement('section');
     this.teamHealthHud.className = 'team-health-hud';
     this.teamHealthHud.hidden = true;
     this.teamHealthCards = [];
 
-    document.querySelector('#game-root').append(this.labels, this.matchHud, this.teamHealthHud, this.audioTestHud);
+    document.querySelector('#game-root').append(this.labels, this.matchHud, this.teamHealthHud, this.audioTestHud, this.fogSettingsHud);
     this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
@@ -1133,6 +1253,7 @@ export class Game {
       this.matchHud.hidden = true;
       this.teamHealthHud.hidden = true;
       this.audioTestHud.hidden = true;
+      this.fogSettingsHud.hidden = true;
       this.labels.hidden = true;
       document.querySelector('#start-screen').hidden = false;
       document.querySelector('#start-screen').classList.add('overlay--visible');

@@ -373,6 +373,64 @@ button {
   background: #31596a;
 }
 
+.fog-settings-hud {
+  position: absolute;
+  z-index: 7;
+  right: max(18px, env(safe-area-inset-right));
+  bottom: max(82px, calc(env(safe-area-inset-bottom) + 66px));
+  width: 250px;
+  padding: 11px 13px;
+  border: 1px solid #77538d;
+  border-radius: 12px;
+  color: #f2eafb;
+  background: #160e24ed;
+  box-shadow: 0 8px 24px #0007;
+}
+
+.fog-settings-hud strong {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+
+.fog-settings-hud label {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 2px 8px;
+  margin-top: 7px;
+  color: #d9cae8;
+  font-size: 11px;
+}
+
+.fog-settings-hud output {
+  color: #e284ff;
+  font-variant-numeric: tabular-nums;
+}
+
+.fog-settings-hud input {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: #bd35eb;
+}
+
+.fog-settings-hud button {
+  width: 100%;
+  margin-top: 10px;
+  padding: 6px 8px;
+  border: 1px solid #77538d;
+  border-radius: 6px;
+  color: #f2eafb;
+  background: #39204b;
+  cursor: pointer;
+}
+
+.fog-settings-hud button:hover,
+.fog-settings-hud button:focus-visible {
+  border-color: #e284ff;
+  background: #512b68;
+}
+
 .match-status {
   font-size: 14px;
   font-weight: 700;
