@@ -85,7 +85,7 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.footstepTimer = 0; this.lowGravity = false;
+    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false;
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
     this.inMenu = true; this.installUI(); this.bindInput();
   }
@@ -289,6 +289,8 @@ export class Game {
       root,
       bodyPivot,
       headGroup,
+      eyeGroup,
+      helmetGroup,
       wingLPivot,
       wingRPivot,
       tailPivot,
@@ -442,7 +444,12 @@ export class Game {
 
         const label = document.createElement('div');
         label.className = 'worm-label';
+        const turnMarker = document.createElement('strong');
+        turnMarker.className = 'turn-marker';
+        turnMarker.innerHTML = '<i>▼</i>';
+        turnMarker.hidden = true;
         const text = document.createElement('span');
+        text.className = 'worm-name';
         text.textContent = wormName;
         // Подкрашиваем рамку и текст в цвет команды
         text.style.borderColor = `#${COLORS[t].toString(16).padStart(6, '0')}`;
@@ -451,13 +458,19 @@ export class Game {
         const health = document.createElement('progress');
         health.max = isTrainingTarget ? 40 : 100;
         health.value = isTrainingTarget ? 40 : 100;
-        label.append(text, health);
+        const healthBar = document.createElement('span');
+        healthBar.className = 'worm-health-bar';
+        const healthText = document.createElement('strong');
+        healthText.className = 'worm-health-value';
+        healthText.textContent = String(isTrainingTarget ? 40 : 100);
+        healthBar.append(health, healthText);
+        label.append(turnMarker, text, healthBar);
         this.labels.append(label);
 
         const worm = {
           body, collider, mesh, duck, label, health, team: t,
           name: wormName,
-          hp: isTrainingTarget ? 40 : 100, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, slideTime: 0, speedBoost: false, invisible: false, frozen: false, poison: 0, radiation: 0,
+          hp: isTrainingTarget ? 40 : 100, displayedHp: isTrainingTarget ? 40 : 100, pendingHp: isTrainingTarget ? 40 : 100, healthRevealTime: 0, healthText, damagePopupQueue: [], turnMarker, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, deathTime: 0, deathSide: 1, deathStartRotation: 0, deathSpinVelocity: 0, deadHelmet: null, poison: 0, radiation: 0,
           trainingTarget: isTrainingTarget,
           x, y, previousX: x, previousY: y, vx: 0, vy: 0,
           grounded: false, airborneTime: 0, airbornePeakY: y, hardFalling: false, knockedDown: false, impactVelocityX: 0, impactSpinDirection: 0, tumbleRotation: 0, recoverySide: -1, recoveryTime: 0, groundNormalX: 0, groundNormalY: 1,
@@ -642,9 +655,13 @@ export class Game {
   createExplosion(x, y, radius) { this.audio?.play('explosion'); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
   damage(w, amount, force = false, impact = true) {
     if (!w.alive || (w.frozen && !force)) return;
+    const previousHp = w.hp;
     w.hp = Math.max(0, w.hp - amount);
-    w.health.value = w.hp;
+    w.pendingHp = w.hp;
     w.health.title = `${w.hp} HP`;
+    if (amount > 0 && previousHp > 0) {
+      w.damagePopupQueue.push(Math.min(amount, previousHp));
+    }
     if (impact && amount > 0 && w.hp > 0 && !w.trainingTarget) {
       w.knockedDown = true;
       w.impactVelocityX = w.body.linvel().x;
@@ -655,10 +672,34 @@ export class Game {
       if (w.trainingTarget && this.advanceTargetTraining(w)) return;
       w.alive = false;
       w.state = 'dead';
-      w.mesh.visible = false;
+      w.mesh.visible = true;
       w.label.hidden = true;
       this.wormByCollider.delete(w.collider.handle);
-      this.world.removeRigidBody(w.body);
+      w.deathTime = 0;
+      w.deathSide = w.impactSpinDirection || -w.facing;
+      w.deathStartRotation = w.mesh.rotation.z;
+      w.knockedDown = false;
+      w.recoveryTime = 0;
+      w.body.wakeUp();
+      if (w.duck.eyeGroup) w.duck.eyeGroup.scale.y = .12;
+      if (w.duck.helmetGroup) {
+        this.scene.attach(w.duck.helmetGroup);
+        w.duck.helmetGroup.updateMatrixWorld(true);
+        const helmetPosition = w.duck.helmetGroup.getWorldPosition(new THREE.Vector3());
+        const helmetBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(helmetPosition.x, helmetPosition.y)
+          .setLinearDamping(.12)
+          .setAngularDamping(.18)
+          .setCcdEnabled(true));
+        const helmetCollider = this.world.createCollider(RAPIER.ColliderDesc.ball(.45)
+          .setMass(.35)
+          .setFriction(.4)
+          .setRestitution(.28), helmetBody);
+        helmetBody.setRotation(w.mesh.rotation.z, true);
+        helmetBody.applyImpulse({ x: w.vx * .18 + w.deathSide * .8, y: Math.max(1.8, w.vy * .15 + 2.4) }, true);
+        helmetBody.applyTorqueImpulse(w.deathSide * 1.6, true);
+        w.deadHelmet = { group: w.duck.helmetGroup, body: helmetBody, collider: helmetCollider };
+      }
     }
   }
 
@@ -670,12 +711,14 @@ export class Game {
 
   update(dt) {
     this.time += dt;
+    this.damageDisplayTime = Math.max(0, this.damageDisplayTime - dt);
+    this.turnIntroTime = Math.max(0, this.turnIntroTime - dt);
     this.particles.update(this.time);
     for (const worm of this.worms) worm.recoveryTime = Math.max(0, worm.recoveryTime - dt);
     if (this.winner) this.victoryTime += dt;
     else { this.turn.update(dt); this.bot.update(dt); }
 
-    if (this.humanInput() && this.active.recoveryTime <= 0 && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
+    if (this.humanInput() && this.turnIntroTime <= 0 && this.active.recoveryTime <= 0 && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
 
       const w = this.active,
         direction = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
@@ -772,6 +815,7 @@ export class Game {
     this.world.step(this.events);
     this.weapons.update(dt);
     this.syncWorms(dt);
+    this.updateDisplayedHealth(dt);
   }
 
   syncWorms(dt = 0) {
@@ -811,7 +855,10 @@ export class Game {
         w.airborneTime += dt;
         w.airbornePeakY = Math.max(w.airbornePeakY, w.y);
         w.hardFalling = w.knockedDown || (w.airborneTime >= .4 && (w.airbornePeakY - w.y >= 3.5 || w.vy < -5.5));
-        if (w.knockedDown) w.tumbleRotation += w.impactSpinDirection * dt * THREE.MathUtils.clamp(4.5 + Math.hypot(w.vx, w.vy) * .35, 5, 10);
+        if (w.knockedDown) {
+          w.healthRevealTime = Math.max(w.healthRevealTime, .12);
+          w.tumbleRotation += w.impactSpinDirection * dt * THREE.MathUtils.clamp(4.5 + Math.hypot(w.vx, w.vy) * .35, 5, 10);
+        }
       } else {
         const wasActuallyAirborne = !wasGrounded && w.airborneTime >= .4;
         const impactSpeed = Math.hypot(w.vx, w.vy);
@@ -823,16 +870,75 @@ export class Game {
         if (hardLanding) {
           w.recoverySide = w.knockedDown ? w.impactSpinDirection : -w.facing;
           w.recoveryTime = 1.45;
+          w.healthRevealTime = Math.max(w.healthRevealTime, 1.45);
           this.audio?.play('landing');
         }
         w.airborneTime = 0;
         w.airbornePeakY = w.y;
         w.hardFalling = impactStillMoving;
-        if (impactStillMoving) w.tumbleRotation += w.impactSpinDirection * dt * THREE.MathUtils.clamp(4.5 + impactSpeed * .35, 5, 10);
+        if (impactStillMoving) {
+          w.healthRevealTime = Math.max(w.healthRevealTime, .12);
+          w.tumbleRotation += w.impactSpinDirection * dt * THREE.MathUtils.clamp(4.5 + impactSpeed * .35, 5, 10);
+        }
         if (!impactStillMoving) w.knockedDown = false;
         if (w.backflipping && this.time - w.backflipStart > .18) w.backflipping = false;
       }
       w.state = w.grounded ? 'alive' : 'airborne';
+    }
+    for (const w of this.worms) if (!w.alive && w.state === 'dead') {
+      w.previousX = w.x; w.previousY = w.y;
+      const previousVx = w.vx, previousVy = w.vy;
+      const p = w.body.translation(), v = w.body.linvel();
+      w.x = p.x; w.y = p.y; w.vx = v.x; w.vy = v.y;
+      if (w.deathTime > .5) {
+        const impulseX = w.vx - previousVx, impulseY = w.vy - previousVy;
+        if (Math.abs(impulseX) > .2 || Math.abs(impulseY) > .35) {
+          w.deathSide = Math.abs(impulseX) > .2 ? -Math.sign(impulseX) : w.deathSide;
+          w.deathSpinVelocity += w.deathSide * THREE.MathUtils.clamp(Math.abs(impulseX) * 1.8 + Math.abs(impulseY), 1, 8);
+        }
+      }
+    }
+  }
+
+  updateDisplayedHealth(dt) {
+    for (const w of this.worms) {
+      if (w.healthRevealTime > 0) {
+        const wasWaiting = w.healthRevealTime > 0;
+        w.healthRevealTime = Math.max(0, w.healthRevealTime - dt);
+        if (wasWaiting && w.healthRevealTime === 0) this.releaseDamagePopups(w);
+        continue;
+      }
+      if (!w.knockedDown && w.recoveryTime <= 0) this.releaseDamagePopups(w);
+      const target = w.pendingHp ?? w.hp;
+      const difference = target - w.displayedHp;
+      if (Math.abs(difference) < .05) {
+        if (w.displayedHp !== target) {
+          w.displayedHp = target;
+          w.health.value = target;
+          w.healthText.textContent = String(Math.ceil(target));
+        }
+        continue;
+      }
+      const healthStep = 48 * dt;
+      w.displayedHp += Math.sign(difference) * Math.min(Math.abs(difference), healthStep);
+      w.health.value = w.displayedHp;
+      w.healthText.textContent = String(Math.ceil(w.displayedHp));
+    }
+  }
+
+  damagePresentationComplete() {
+    return this.worms.every(w => w.healthRevealTime <= 0 && Math.abs((w.pendingHp ?? w.hp) - w.displayedHp) < .05);
+  }
+
+  releaseDamagePopups(w) {
+    if (!w.label || w.label.hidden || !w.damagePopupQueue?.length) return;
+    this.damageDisplayTime = Math.max(this.damageDisplayTime, 1.4);
+    for (const percent of w.damagePopupQueue.splice(0)) {
+      const popup = document.createElement('strong');
+      popup.className = 'worm-damage-popup';
+      popup.textContent = `-${percent}`;
+      w.label.append(popup);
+      setTimeout(() => popup.remove(), 2100);
     }
   }
 
@@ -843,8 +949,13 @@ export class Game {
     this.targetTrainingStage = nextStage;
     const position = this.targetTrainingTargets[nextStage];
     target.hp = 40;
+    target.displayedHp = 40;
+    target.pendingHp = 40;
+    target.healthRevealTime = 0;
+    target.damagePopupQueue.length = 0;
     target.health.max = 40;
     target.health.value = 40;
+    target.healthText.textContent = '40';
     target.health.title = '40 HP';
     target.name = `Мишень ${nextStage + 1}`;
     target.label.querySelector('span').textContent = target.name;
@@ -882,7 +993,7 @@ export class Game {
   }
 
   render(dt, alpha) {
-    const target = this.weapons.projectile || this.active;
+    const target = this.cameraFocus || this.weapons.projectile || this.active;
     const smoothing = 1 - Math.exp(-5 * dt);
     this.camera.zoom += (this.zoom - this.camera.zoom) * smoothing;
     this.camera.updateProjectionMatrix();
@@ -894,6 +1005,7 @@ export class Game {
         y = halfH >= MAP.height / 2 ? MAP.height / 2 : THREE.MathUtils.clamp(target.y, halfH, MAP.height - halfH);
       this.camera.position.x += (x - this.camera.position.x) * smoothing;
       this.camera.position.y += (y - this.camera.position.y) * smoothing;
+      if (this.cameraFocus && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
     }
     this.camera.updateMatrixWorld();
 
@@ -903,6 +1015,9 @@ export class Game {
       const isWinningWorm = this.winner && this.winningTeam === w.team;
       w.mesh.visible = !w.invisible || w === this.active;
       w.label.hidden = w.invisible && w !== this.active;
+      const showTurnMarker = w === this.active && !this.activeMoved && !this.winner;
+      w.turnMarker.hidden = !showTurnMarker;
+      w.turnMarker.classList.toggle('turn-marker-spring', showTurnMarker && this.turnIntroTime <= 1.2);
       w.animTime += dt;
       const posX = w.previousX + (w.x - w.previousX) * alpha;
       const posY = w.previousY + (w.y - w.previousY) * alpha;
@@ -1023,6 +1138,21 @@ export class Game {
       }
     }
 
+    for (const w of this.worms) if (!w.alive && w.state === 'dead') {
+      w.deathTime += dt;
+      w.mesh.position.set(w.x, w.y, 0);
+      const fallProgress = THREE.MathUtils.smoothstep(Math.min(1, w.deathTime / .5), 0, 1);
+      w.mesh.rotation.z = THREE.MathUtils.lerp(w.deathStartRotation, w.deathSide * Math.PI * .5, fallProgress);
+      if (w.deadHelmet) {
+        const helmet = w.deadHelmet;
+        const helmetPosition = helmet.body.translation();
+        helmet.group.position.set(helmetPosition.x, helmetPosition.y, .12);
+        helmet.group.rotation.z = helmet.body.rotation();
+      }
+      w.deathSpinVelocity *= Math.max(0, 1 - dt * 3.5);
+      w.mesh.rotation.z += w.deathSpinVelocity * dt;
+    }
+
     const showAim = !!this.active?.alive && !this.winner &&
       (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT);
     this.aim.visible = showAim;
@@ -1105,7 +1235,7 @@ export class Game {
       }
     });
     this.canvas.addEventListener('pointermove', e => {
-      if (!this.humanInput() || this.weaponPanel.open) return;
+      if (!this.humanInput() || this.weaponPanel.open || this.turnIntroTime > 0) return;
       const rect = this.canvas.getBoundingClientRect();
       this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
       if (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT) {
@@ -1397,7 +1527,8 @@ export class Game {
       w.label.classList.toggle('active', isActive);
 
       // Скрываем плашку активного игрока, если он уже сдвинулся или целится
-      if (isActive && this.activeMoved) {
+      const turnAllowsLabelHide = this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT;
+      if (isActive && this.activeMoved && turnAllowsLabelHide) {
         w.label.style.display = 'none';
       } else {
         w.label.style.display = 'flex';

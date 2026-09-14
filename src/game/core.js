@@ -39,9 +39,13 @@ export class TurnMachine {
     this.still = 0;
     this.shots = 2;
     this.weapon = 'bazooka';
+    this.countdownStarted = false;
   }
   next() {
     const g = this.game;
+    if (g.damageDisplayTime > 0 || !g.damagePresentationComplete()) { this.still = 0; this.state = TURN.SETTLING; return; }
+    g.audio?.stopLoop('turnCountdown');
+    this.countdownStarted = false;
     g.weapons.endUtility();
     g.weapons.girderStock = 5;
     g.lowGravity = false;
@@ -68,6 +72,9 @@ export class TurnMachine {
       this.cursors[this.team] = wormOrder[wormOrderIndex];
     } while (!worms[this.cursors[this.team]].alive);
     g.active = worms[this.cursors[this.team]];
+    g.cameraFocus = g.active;
+    g.turnIntroTime = 1.8;
+    g.audio?.play('turnIndicator');
     g.activeMoved = false; // <-- Сбрасываем флаг движения для нового хода
     g.wind = (Math.random() * 2 - 1) * WIND_MAX;
     for (const worm of g.worms) if (worm.team === this.team) { worm.frozen = false; worm.speedBoost = false; worm.invisible = false; worm.laserSight = false; }
@@ -81,6 +88,7 @@ export class TurnMachine {
   release() {
     if (this.state !== TURN.CHARGING_SHOT) return;
     this.game.audio?.stopLoop('energyCharge');
+    this.game.cameraFocus = null;
     this.state = TURN.ACTION_RESOLVING;
     if (this.game.weapons.fire(this.weapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
     this.game.audio?.play('energyShot');
@@ -89,12 +97,16 @@ export class TurnMachine {
       if (this.weapon !== 'freeze') for (const worm of this.game.teams[this.team].worms) worm.invisible = false;
     }
   }
-  settle() { this.still = 0; this.state = TURN.SETTLING; }
+  settle() { this.game.audio?.stopLoop('turnCountdown'); this.countdownStarted = false; this.still = 0; this.state = TURN.SETTLING; }
   update(dt) {
     if (this.game.winner) return;
     if (this.state === TURN.NEXT_TURN) { this.next(); return; }
     if (this.state === TURN.WAITING_INPUT || this.state === TURN.CHARGING_SHOT) {
       this.remaining = Math.max(0, this.remaining - dt);
+      if (this.remaining <= 10 && this.remaining > 0 && !this.countdownStarted) {
+        this.game.audio?.startLoop('turnCountdown');
+        this.countdownStarted = true;
+      }
       if (!this.game.active.alive) { this.game.weapons.endUtility(); this.shots = 0; this.settle(); return; }
       if (this.state === TURN.CHARGING_SHOT) this.charge = Math.min(1, this.charge + dt / 1.5);
       if (this.remaining === 0) { if (this.state === TURN.CHARGING_SHOT) this.release(); this.game.weapons.endUtility(); this.shots = 0; this.settle(); }
@@ -107,7 +119,7 @@ export class TurnMachine {
         if (w.vx * w.vx + w.vy * w.vy > 0.025 || !w.grounded) { stable = false; break; }
       }
       this.still = stable ? this.still + dt : 0;
-      if (this.still >= 0.6) {
+      if (this.still >= 0.6 && this.game.damageDisplayTime <= 0 && this.game.damagePresentationComplete()) {
         if ((this.weapon === 'shotgun' || this.weapon === 'longbow') && this.shots > 0 && this.remaining > 0 && this.game.active.alive) this.state = TURN.WAITING_INPUT;
         else this.state = TURN.NEXT_TURN;
       }

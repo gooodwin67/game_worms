@@ -19,6 +19,8 @@ export class AudioManager {
     this.registerSfx('footstep', 'footstep.wav', { volume: 0.42 });
     this.registerSfx('jump', 'jump.wav', { volume: 0.55 });
     this.registerSfx('landing', 'landing.wav', { volume: 0.7 });
+    this.registerSfx('turnIndicator', 'turn_indicator.wav', { volume: 0.65 });
+    this.registerSfx('turnCountdown', 'turn_countdown.wav', { loop: true, volume: 0.23 });
   }
 
   register(audioElement) {

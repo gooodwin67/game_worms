@@ -605,7 +605,7 @@ button {
   filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.9));
 }
 
-.worm-label span {
+.worm-name {
   display: block;
   padding: 3px 7px;
   padding-bottom: 0px;
@@ -622,18 +622,151 @@ button {
   text-shadow: 0px 0px 4px #000;
 }
 
-.worm-label progress {
+.turn-marker {
+  position: absolute;
+  bottom: calc(100% + 7px);
+  left: 50%;
+  width: 150px;
+  height: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-family: monospace, monospace;
+  font-weight: 900;
+  line-height: .9;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 5px 3px #000c) drop-shadow(0 0 10px #ffd166);
+  animation: turn-marker-enter .6s linear forwards;
+}
+
+.turn-marker::before {
+  position: absolute;
+  inset: 18px;
+  border: 3px solid #ffd166;
+  border-radius: 50%;
+  box-shadow: 0 0 12px #ffd166, inset 0 0 12px #ffd166;
+  content: '';
+  opacity: .65;
+  animation: turn-marker-ring 1.4s ease-out infinite;
+}
+
+.turn-marker i {
+  position: relative;
+  z-index: 1;
+  color: transparent;
+  font-size: 145px;
+  font-style: normal;
+  line-height: .72;
+  background: linear-gradient(115deg, #fff 3%, #fff4b0 22%, #ffd166 46%, #ff9f1c 67%, #fff0a3 86%, #fff 100%);
+  background-size: 220% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  -webkit-text-stroke: 3px #fff1a3;
+  animation: turn-marker-shimmer 1.6s linear infinite;
+}
+
+.turn-marker.turn-marker-spring {
+  animation: turn-marker-spring 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes turn-marker-enter {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-120px);
+  }
+
+  25% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-78px);
+  }
+
+  50% {
+    transform: translateX(-50%) translateY(-45px);
+  }
+
+  75% {
+    transform: translateX(-50%) translateY(-20px);
+  }
+
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes turn-marker-spring {
+  from {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1) rotate(0deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-6px) scale(1.04) rotate(0deg);
+  }
+}
+
+@keyframes turn-marker-ring {
+  0% {
+    opacity: .75;
+    transform: scale(.55);
+  }
+
+  100% {
+    opacity: 0;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes turn-marker-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -20% 0;
+  }
+}
+
+.worm-health-bar {
+  position: relative;
   display: block;
   width: 84px;
-  height: 6px;
+  height: 10px;
+  margin-top: 2px;
+}
+
+.worm-label progress {
+  display: block;
+  width: 100%;
+  height: 10px;
   margin: 0;
   background: #000;
   border: 1.5px solid #555;
-  border-radius: 1px;
+  border-radius: 10px;
   appearance: none;
   -webkit-appearance: none;
   overflow: hidden;
-  margin-top: 2px;
+}
+
+.worm-health-value {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-family: monospace, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 1px 2px #000, 0 0 2px #000;
+  pointer-events: none;
+  top: 0px;
 }
 
 .worm-label progress::-webkit-progress-bar {
@@ -646,6 +779,32 @@ button {
 
 .worm-label progress::-moz-progress-bar {
   background: #ff3344;
+}
+
+.worm-damage-popup {
+  position: absolute;
+  top: -2px;
+  color: #ff6868;
+  font-family: monospace, monospace;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: 0 2px 4px #000, 0 0 5px #000;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: worm-damage-popup-float 2s ease-out forwards;
+}
+
+@keyframes worm-damage-popup-float {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-68px) scale(1.08);
+  }
 }
 
 .worm-label.active progress {
