@@ -149,6 +149,7 @@ export class Bot {
     for (const target of this.rankedTargets(w, level)) {
       for (const weapon of this.profile.weapons) {
         if (weapon === 'teleport') continue;
+        if (!this.g.canUseWeapon(weapon, w.team)) continue;
         const candidate = this.evaluateWeapon(level, weapon, w, target, mask);
         if (candidate) candidates.push(candidate);
       }

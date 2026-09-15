@@ -1,2 +1,2 @@
-export { Weapons, ARSENAL } from './arsenal.js';
+export { Weapons, ARSENAL, UNLIMITED_WEAPONS } from './arsenal.js';
 export { Bot } from './bot.js';

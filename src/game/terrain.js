@@ -25,6 +25,7 @@ export class Terrain {
           d[i + 3] = 0;
         }
       }
+      this.removeTinyIslands(imgData, 48);
       this.ctx.putImageData(imgData, 0, 0);
     } else {
       this.generateProcedural();
@@ -132,6 +133,32 @@ export class Terrain {
     }
   }
 
+  removeTinyIslands(imageData, minimumPixels) {
+    const width = imageData.width, height = imageData.height, data = imageData.data;
+    const visited = new Uint8Array(width * height);
+    const solid = index => data[index * 4 + 3] >= 128;
+    const neighbours = (index, visit) => {
+      const x = index % width, y = Math.floor(index / width);
+      if (x > 0) visit(index - 1);
+      if (x + 1 < width) visit(index + 1);
+      if (y > 0) visit(index - width);
+      if (y + 1 < height) visit(index + width);
+    };
+
+    for (let start = 0; start < visited.length; start++) {
+      if (visited[start] || !solid(start)) continue;
+      const component = [start];
+      visited[start] = 1;
+      for (let head = 0; head < component.length; head++) {
+        neighbours(component[head], next => {
+          if (!visited[next] && solid(next)) { visited[next] = 1; component.push(next); }
+        });
+      }
+      if (component.length >= minimumPixels) continue;
+      for (const index of component) data[index * 4 + 3] = 0;
+    }
+  }
+
   generateProcedural() {
     this.seed = crypto.getRandomValues(new Uint32Array(1))[0];
     let randomState = this.seed;
@@ -187,7 +214,7 @@ export class Terrain {
     return THREE.MathUtils.clamp(y, 13, 37);
   }
 
-  spawnHeight(x) {
+  spawnHeight(x, useFallback = true) {
     const radius = 0.38, halfHeight = 0.23;
     const requiredClearance = 1.4;
     const clearancePixels = Math.ceil(requiredClearance * this.scale);
@@ -216,6 +243,7 @@ export class Terrain {
       }
     }
 
+    if (!validFloors.length && !useFallback) return null;
     let targetRow = validFloors.length > 0
       ? validFloors[Math.floor(Math.random() * validFloors.length)]
       : Math.floor(this.canvas.height * 0.5);
@@ -235,6 +263,29 @@ export class Terrain {
     }
 
     return (centerY || (MAP.height - targetRow / this.scale + halfHeight + radius)) + 0.002;
+  }
+
+  findSpawnPoints(step = .65) {
+    const points = [];
+    for (let x = .8; x < MAP.width - .8; x += step) {
+      const y = this.spawnHeight(x, false);
+      if (y !== null) points.push({ x, y });
+    }
+    return points;
+  }
+
+  landingHeight(x, halfWidth = .52, halfHeight = .36) {
+    const left = Math.max(0, Math.floor((x - halfWidth) * this.scale));
+    const right = Math.min(this.canvas.width - 1, Math.floor((x + halfWidth) * this.scale));
+    const width = right - left + 1;
+    const pixels = this.ctx.getImageData(left, 0, width, this.canvas.height).data;
+    const centerColumn = Math.floor((x - left / this.scale) * this.scale);
+    const rowHasSolid = row => pixels[(row * width + centerColumn) * 4 + 3] >= 128;
+    for (let row = 0; row < this.canvas.height; row++) {
+      if (!rowHasSolid(row) || (row > 0 && rowHasSolid(row - 1))) continue;
+      return MAP.height - row / this.scale + halfHeight + .002;
+    }
+    return null;
   }
 
   findPlatformTops(minPixels = 800) {

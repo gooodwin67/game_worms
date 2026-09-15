@@ -1,4 +1,4 @@
-import { ARSENAL } from './arsenal.js';
+import { ARSENAL, UNLIMITED_WEAPONS } from './arsenal.js';
 import { WEAPON_ICON_REGIONS } from './weapon-icon-regions.js';
 
 // Atlas cells follow ARSENAL's order; panel rows follow the classic families.
@@ -66,7 +66,10 @@ export class WeaponPanel {
         atlas.setAttribute('height', '2098');
         crop.append(atlas);
         icon.append(crop);
-        button.append(icon);
+        const count = document.createElement('span');
+        count.className = 'weapon-count';
+        count.textContent = UNLIMITED_WEAPONS.has(id) ? '∞' : '1';
+        button.append(icon, count);
         button.addEventListener('pointerenter', () => { this.caption.textContent = ARSENAL[id]; });
         button.addEventListener('focus', () => { this.caption.textContent = ARSENAL[id]; });
         button.addEventListener('click', () => this.select(id));
@@ -100,6 +103,7 @@ export class WeaponPanel {
   }
   select(id) {
     if (!this.canSelect()) return;
+    if (!this.game.canUseWeapon(id)) return;
     this.game.turn.weapon = id;
     this.game.weapons.resetTarget();
     this.close();
@@ -117,9 +121,12 @@ export class WeaponPanel {
     this.toggle.disabled = !this.canSelect();
     for (const button of this.buttons) {
       const selected = button.dataset.weapon === g.turn.weapon;
+      const count = g.weaponCount(button.dataset.weapon);
       button.classList.toggle('selected', selected);
+      button.classList.toggle('empty', count === 0);
+      button.querySelector('.weapon-count').textContent = count === Infinity ? '∞' : String(count);
       button.setAttribute('aria-pressed', String(selected));
-      button.disabled = !this.canSelect();
+      button.disabled = !this.canSelect() || count === 0;
     }
   }
 }

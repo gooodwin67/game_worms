@@ -21,6 +21,7 @@ export class AudioManager {
     this.registerSfx('landing', 'landing.wav', { volume: 0.7 });
     this.registerSfx('turnIndicator', 'turn_indicator.wav', { volume: 0.65 });
     this.registerSfx('turnCountdown', 'turn_countdown.wav', { loop: true, volume: 0.23 });
+    this.registerSfx('supplyCrateDrop', 'supply_crate_drop.wav', { volume: 0.45 });
   }
 
   register(audioElement) {

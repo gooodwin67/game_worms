@@ -39,6 +39,7 @@ export class TurnMachine {
     this.still = 0;
     this.shots = 2;
     this.weapon = 'bazooka';
+    this.weaponConsumed = false;
     this.countdownStarted = false;
   }
   next() {
@@ -51,9 +52,16 @@ export class TurnMachine {
     g.lowGravity = false;
     g.world.gravity = { x: 0, y: GRAVITY };
     this.lockedWeapon = null;
+    if (g.supplyDropPending) {
+      if (g.supplyCrates.some(crate => !crate.landed)) return;
+      g.supplyDropPending = false;
+    } else if (this.team >= 0 && g.gameMode === 'quick') {
+      g.completedTurns++;
+      if (g.completedTurns % 1 === 0) { g.spawnSupplyCrate(); g.supplyDropPending = true; return; }
+    }
     let survivors = 0, winner = null;
     for (const team of g.teams) if (!team.surrendered && team.worms.some(w => w.alive)) { survivors++; winner = team; }
-    if (survivors <= 1) {
+    if (!g.trainingFreePractice && survivors <= 1) {
       g.winningTeam = winner ? g.teams.indexOf(winner) : null;
       g.victoryTime = 0;
       g.winner = winner ? `${winner.name} побеждает!` : 'Ничья';
@@ -79,7 +87,7 @@ export class TurnMachine {
     g.wind = (Math.random() * 2 - 1) * WIND_MAX;
     for (const worm of g.worms) if (worm.team === this.team) { worm.frozen = false; worm.speedBoost = false; worm.invisible = false; worm.laserSight = false; }
     for (const worm of g.worms) if (worm.alive && !worm.frozen && (worm.poison || worm.radiation)) g.damage(worm, Math.min(worm.hp - 1, 2), false, false);
-    this.remaining = 45; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' && g.trainingWeapon ? g.trainingWeapon : 'bazooka'; this.state = TURN.WAITING_INPUT;
+    this.remaining = 45; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' && g.trainingWeapon ? g.trainingWeapon : 'bazooka'; this.weaponConsumed = false; this.state = TURN.WAITING_INPUT;
     g.angle = g.active.facing < 0 ? Math.PI * .75 : Math.PI * .25;
     g.keys.clear(); g.weapons.resetTarget(); g.bot.reset();
   }
@@ -88,10 +96,15 @@ export class TurnMachine {
   release() {
     if (this.state !== TURN.CHARGING_SHOT) return;
     this.game.audio?.stopLoop('energyCharge');
+    if (!this.weaponConsumed && !this.game.canUseWeapon(this.weapon)) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
     this.game.cameraFocus = null;
     this.state = TURN.ACTION_RESOLVING;
     if (this.game.weapons.fire(this.weapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
     this.game.audio?.play('energyShot');
+    if (!this.weaponConsumed) {
+      this.game.consumeWeapon(this.weapon);
+      this.weaponConsumed = true;
+    }
     if (this.state === TURN.ACTION_RESOLVING || this.state === TURN.SETTLING) {
       if (!this.game.weapons.drilling && !['skipGo', 'surrender', 'freeze', 'selectWorm', 'scales', 'teleport', 'girder', 'girderPack'].includes(this.weapon)) this.game.weapons.retreat = Math.max(this.game.weapons.retreat, 3);
       if (this.weapon !== 'freeze') for (const worm of this.game.teams[this.team].worms) worm.invisible = false;

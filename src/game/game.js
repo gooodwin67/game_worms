@@ -3,12 +3,26 @@ import RAPIER from '@dimforge/rapier2d-compat';
 import { GameLoop, TurnMachine, TURN, MAP, GRAVITY, COLORS, FIXED_DT } from './core.js';
 import { Terrain } from './terrain.js';
 import { ExplosionParticles } from './particles.js';
-import { Weapons, Bot, ARSENAL } from './weapons.js';
+import { Weapons, Bot, ARSENAL, UNLIMITED_WEAPONS } from './weapons.js';
 import { WeaponPanel } from './weapon-panel.js';
 import { WeaponArt, disposeWeaponMesh } from './weapon-art.js';
 import { WEAPON_ICON_REGIONS } from './weapon-icon-regions.js';
 
 const STANDING_SLOPE_NORMAL_Y = Math.cos(80 * Math.PI / 180);
+const TRAINING_SCENARIOS = Object.freeze({
+  jetPack: { map: 'open', mode: 'free', indestructible: true },
+  bazooka: { map: 'target', mode: 'sequential', indestructible: true, order: [0, 1, 2] },
+  homing: { map: 'target', mode: 'sequential', indestructible: true, order: [2, 1, 0] },
+  pigeon: { map: 'target', mode: 'sequential', indestructible: true, order: [1, 2, 0] },
+  grenade: { map: 'target', mode: 'sequential', indestructible: true, order: [0, 2, 1] },
+  shotgun: { map: 'target', mode: 'sequential', indestructible: true, order: [0, 1, 2] },
+  longbow: { map: 'target', mode: 'sequential', indestructible: true, order: [2, 0, 1] },
+  firePunch: { map: 'target', mode: 'close', indestructible: true },
+  dynamite: { map: 'open', mode: 'sequential', indestructible: false, positions: [28, 45, 62] },
+  sheep: { map: 'open', mode: 'sequential', indestructible: false, positions: [35, 52, 69] },
+  airstrike: { map: 'target', mode: 'sequential', indestructible: true, order: [1, 0, 2] },
+  ninjaRope: { map: 'open', mode: 'free', indestructible: true }
+});
 
 // Зафиксированные параметры утки
 const DUCK_PARAMS = {
@@ -341,6 +355,8 @@ export class Game {
       this.terrain.dispose();
       this.particles.dispose();
       this.weapons.dispose();
+      for (const crate of this.supplyCrates || []) crate.dispose();
+      this.supplyCrates = [];
       if (this.water) { this.water.removeFromParent(); this.water.geometry.dispose(); this.water.material.dispose(); }
       for (const w of this.worms) {
         disposeWeaponMesh(w.duck.weaponMesh);
@@ -354,22 +370,41 @@ export class Game {
     this.lowGravity = false;
     this.world.timestep = FIXED_DT;
     this.events = new RAPIER.EventQueue(true);
-    // Проверяем, какой режим выбран в стартовом меню
-    this.targetTrainingActive = this.gameMode === 'training' && ['grenade', 'bazooka'].includes(this.trainingWeapon);
+    // У каждой тренировки свой полигон: цели нужны только там, где они являются частью упражнения.
+    this.trainingScenario = this.gameMode === 'training' ? TRAINING_SCENARIOS[this.trainingWeapon] : null;
+    this.trainingFreePractice = this.trainingScenario?.mode === 'free';
+    this.targetTrainingActive = this.trainingScenario?.mode === 'sequential' || this.trainingScenario?.mode === 'close';
     this.targetTrainingStage = 0;
-    this.trainingIndestructible = this.targetTrainingActive;
+    this.trainingIndestructible = Boolean(this.trainingScenario?.indestructible);
     const useFile = this.gameMode !== 'training' && document.querySelector('input[name="mapSource"]:checked')?.value === 'custom';
-    const mapImage = this.targetTrainingActive ? this.targetTrainingMapImage : (useFile && this.customMapImage) ? this.customMapImage : null;
+    const mapImage = this.trainingScenario?.map === 'target' ? this.targetTrainingMapImage : (useFile && this.customMapImage) ? this.customMapImage : null;
 
     this.terrain = new Terrain(this.scene, this.world, mapImage);
-    const trainingPlatforms = this.targetTrainingActive ? this.terrain.findPlatformTops() : [];
+    const trainingPlatforms = this.trainingScenario?.map === 'target' ? this.terrain.findPlatformTops() : [];
     if (trainingPlatforms.length >= 4) {
       const [playerPlatform, ...targetPlatforms] = trainingPlatforms;
-      this.targetTrainingPlayerPosition = { x: playerPlatform.x, y: playerPlatform.surfaceY + .612 };
-      this.targetTrainingTargets = targetPlatforms.slice(0, 3).map(platform => ({ x: platform.x, y: platform.surfaceY + .67 }));
+      if (this.trainingScenario?.mode === 'close') {
+        const targetPlatform = targetPlatforms[0];
+        const left = targetPlatform.x - targetPlatform.width / 2 + .8;
+        const right = targetPlatform.x + targetPlatform.width / 2 - .8;
+        const playerX = THREE.MathUtils.clamp(targetPlatform.x - 1.35, left, right - 1.1);
+        this.targetTrainingPlayerPosition = { x: playerX, y: targetPlatform.surfaceY + .612 };
+        this.targetTrainingTargets = [
+          { x: playerX + 1.1, y: targetPlatform.surfaceY + .67 },
+          { x: targetPlatform.x, y: targetPlatform.surfaceY + .67 },
+          { x: targetPlatform.x + Math.min(1.1, targetPlatform.width / 4), y: targetPlatform.surfaceY + .67 }
+        ];
+      } else {
+        this.targetTrainingPlayerPosition = { x: playerPlatform.x, y: playerPlatform.surfaceY + .612 };
+        const order = this.trainingScenario?.order || [0, 1, 2];
+        this.targetTrainingTargets = order.map(index => targetPlatforms[index] || targetPlatforms[0]).map(platform => ({ x: platform.x, y: platform.surfaceY + .67 }));
+      }
     } else {
       this.targetTrainingPlayerPosition = { x: 10.5, y: this.terrain.spawnHeight(10.5) };
-      this.targetTrainingTargets = [46.7, 60, 73.7].map(x => ({ x, y: this.terrain.spawnHeight(x) }));
+      const targetXs = this.trainingScenario?.positions || [46.7, 60, 73.7];
+      this.targetTrainingTargets = this.trainingScenario?.mode === 'close'
+        ? [11.8, 12.2, 12.6].map(x => ({ x, y: this.terrain.spawnHeight(x) }))
+        : targetXs.map(x => ({ x, y: this.terrain.spawnHeight(x) }));
     }
     this.water = new THREE.Mesh(new THREE.PlaneGeometry(MAP.width, 1), new THREE.MeshBasicMaterial({ color: 0x2f8fb3, transparent: true, opacity: .72 }));
     this.water.position.set(MAP.width / 2, -.5, -.05);
@@ -385,23 +420,45 @@ export class Game {
     this.winner = null;
     this.winningTeam = null;
     this.victoryTime = 0;
+    this.completedTurns = 0;
+    this.supplyCrates = [];
+    this.supplyDropPending = false;
     this.active = null;
     this.waterLevel = 0;
     this.time = 0;
     this.angle = Math.PI / 4;
     this.keys.clear();
 
-    const count = this.gameMode === 'training' ? 2 : Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
-      perTeam = this.targetTrainingActive ? 1 : this.gameMode === 'training' ? 3 : Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
+    const count = this.trainingFreePractice ? 1 : this.gameMode === 'training' ? 2 : Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
+      perTeam = this.trainingScenario ? 1 : this.gameMode === 'training' ? 3 : Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
     const rows = this.teamRows.children;
     const spawnCount = count * perTeam;
     const spawnSegment = (MAP.width - 10) / spawnCount;
-    const spawnXs = Array.from({ length: spawnCount }, (_, index) =>
-      5 + (index + .18 + Math.random() * .64) * spawnSegment
-    );
-    for (let i = spawnXs.length - 1; i > 0; i--) {
+    let spawnLocations;
+    if (this.terrain.hasCustomImage) {
+      const candidates = this.terrain.findSpawnPoints();
+      const selected = [];
+      // Берём следующую точку максимально далеко от уже выбранных,
+      // чтобы черви не скучивались на одной широкой платформе.
+      if (candidates.length) selected.push(candidates[Math.floor(Math.random() * candidates.length)]);
+      while (selected.length < Math.min(spawnCount, candidates.length)) {
+        let best = [], bestDistance = -Infinity;
+        for (const candidate of candidates) {
+          if (selected.includes(candidate)) continue;
+          const distance = selected.length ? Math.min(...selected.map(point => Math.abs(point.x - candidate.x))) : Infinity;
+          if (distance > bestDistance + .2) { bestDistance = distance; best = [candidate]; }
+          else if (Math.abs(distance - bestDistance) <= .2) best.push(candidate);
+        }
+        if (!best.length) break;
+        selected.push(best[Math.floor(Math.random() * best.length)]);
+      }
+      spawnLocations = selected;
+    } else {
+      spawnLocations = Array.from({ length: spawnCount }, (_, index) => ({ x: 5 + (index + .18 + Math.random() * .64) * spawnSegment, y: null }));
+    }
+    for (let i = spawnLocations.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
-      [spawnXs[i], spawnXs[j]] = [spawnXs[j], spawnXs[i]];
+      [spawnLocations[i], spawnLocations[j]] = [spawnLocations[j], spawnLocations[i]];
     }
     let spawnIndex = 0;
 
@@ -414,21 +471,28 @@ export class Game {
         name = this.gameMode === 'training' ? (t === 0 ? 'Учебный отряд' : 'Мишени') : configuredName,
         selectedBot = rows[t].querySelector('select').value,
         bot = this.gameMode === 'training' && t > 0 ? 'target' : selectedBot;
-      const team = { name, bot, passive: bot === 'target', color: COLORS[t], worms: [] };
+      const inventory = Object.fromEntries(Object.keys(ARSENAL).map(id => [id, UNLIMITED_WEAPONS.has(id) ? Infinity : 1]));
+      const team = { name, bot, passive: bot === 'target', color: COLORS[t], worms: [], inventory };
       this.teams.push(team);
 
       for (let i = 0; i < perTeam; i++) {
         const isTrainingTarget = this.targetTrainingActive && t === 1;
-        const trainingPosition = this.targetTrainingActive ? (isTrainingTarget ? this.targetTrainingTargets[0] : this.targetTrainingPlayerPosition) : null;
-        const x = trainingPosition?.x ?? spawnXs[spawnIndex++],
-          y = trainingPosition?.y ?? this.terrain.spawnHeight(x);
+        const trainingPosition = this.trainingScenario
+          ? (isTrainingTarget ? this.targetTrainingTargets[0] : this.targetTrainingPlayerPosition)
+          : null;
+        const rawSpawnLocation = spawnLocations[spawnIndex++];
+        const spawnLocation = rawSpawnLocation || (this.terrain.hasCustomImage && spawnLocations.length
+          ? spawnLocations[spawnIndex % spawnLocations.length]
+          : null);
+        const x = trainingPosition?.x ?? spawnLocation?.x ?? 5 + Math.random() * (MAP.width - 10),
+          y = trainingPosition?.y ?? spawnLocation?.y ?? this.terrain.spawnHeight(x);
         const bodyDescription = isTrainingTarget
           ? RAPIER.RigidBodyDesc.fixed().setTranslation(x, y)
           : RAPIER.RigidBodyDesc.dynamic().setTranslation(x, y).lockRotations().setLinearDamping(.12).setCcdEnabled(true);
         const body = this.world.createRigidBody(bodyDescription);
         const colliderDescription = isTrainingTarget
           ? RAPIER.ColliderDesc.ball(.66).setFriction(.2).setRestitution(.15).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
-          : RAPIER.ColliderDesc.capsule(.23, .38).setMass(1).setFriction(.38).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(0);
+          : RAPIER.ColliderDesc.capsule(.23, .38).setMass(1).setFriction(.38).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(0).setCollisionGroups(0x00020001);
         const collider = this.world.createCollider(colliderDescription, body);
 
         // Игрок остаётся уткой, учебная мишень собирается из простых геометрических примитивов.
@@ -448,6 +512,11 @@ export class Game {
         turnMarker.className = 'turn-marker';
         turnMarker.innerHTML = '<i>▼</i>';
         turnMarker.hidden = true;
+        const fuelIndicator = document.createElement('span');
+        fuelIndicator.className = 'jetpack-fuel-indicator';
+        fuelIndicator.innerHTML = '<small>ТОПЛИВО</small><strong>100</strong>';
+        fuelIndicator.hidden = true;
+        const fuelValue = fuelIndicator.querySelector('strong');
         const text = document.createElement('span');
         text.className = 'worm-name';
         text.textContent = wormName;
@@ -464,11 +533,11 @@ export class Game {
         healthText.className = 'worm-health-value';
         healthText.textContent = String(isTrainingTarget ? 40 : 100);
         healthBar.append(health, healthText);
-        label.append(turnMarker, text, healthBar);
+        label.append(turnMarker, fuelIndicator, text, healthBar);
         this.labels.append(label);
 
         const worm = {
-          body, collider, mesh, duck, label, health, team: t,
+          body, collider, mesh, duck, label, health, fuelIndicator, fuelValue, team: t,
           name: wormName,
           hp: isTrainingTarget ? 40 : 100, displayedHp: isTrainingTarget ? 40 : 100, pendingHp: isTrainingTarget ? 40 : 100, healthRevealTime: 0, healthText, damagePopupQueue: [], turnMarker, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, deathTime: 0, deathSide: 1, deathStartRotation: 0, deathSpinVelocity: 0, deadHelmet: null, poison: 0, radiation: 0,
           trainingTarget: isTrainingTarget,
@@ -633,6 +702,113 @@ export class Game {
     }
   }
 
+  weaponCount(type, teamIndex = this.turn?.team) {
+    if (UNLIMITED_WEAPONS.has(type)) return Infinity;
+    return this.teams[teamIndex]?.inventory?.[type] ?? 0;
+  }
+
+  canUseWeapon(type, teamIndex = this.turn?.team) {
+    return this.gameMode === 'training' || this.weaponCount(type, teamIndex) > 0;
+  }
+
+  consumeWeapon(type, teamIndex = this.turn?.team) {
+    if (this.gameMode === 'training' || UNLIMITED_WEAPONS.has(type)) return true;
+    const inventory = this.teams[teamIndex]?.inventory;
+    if (!inventory || inventory[type] <= 0) return false;
+    inventory[type]--;
+    return true;
+  }
+
+  addWeaponToTeam(teamIndex, type) {
+    const inventory = this.teams[teamIndex]?.inventory;
+    if (!inventory || UNLIMITED_WEAPONS.has(type)) return;
+    inventory[type] = (inventory[type] || 0) + 1;
+  }
+
+  randomSupplyWeapon() {
+    const available = Object.keys(ARSENAL).filter(type => !UNLIMITED_WEAPONS.has(type));
+    return available[Math.floor(Math.random() * available.length)];
+  }
+
+  createSupplyCrate() {
+    const root = new THREE.Group();
+    const crateTexture = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/weapon-crate.png`);
+    crateTexture.colorSpace = THREE.SRGBColorSpace;
+    crateTexture.minFilter = THREE.LinearFilter;
+    crateTexture.magFilter = THREE.NearestFilter;
+    crateTexture.wrapS = THREE.ClampToEdgeWrapping;
+    crateTexture.wrapT = THREE.ClampToEdgeWrapping;
+    // У исходной картинки большие прозрачные поля — берём только область самого ящика.
+    crateTexture.repeat.set(.56, .36);
+    crateTexture.offset.set(.21, .31);
+    const crateMaterial = new THREE.MeshBasicMaterial({ map: crateTexture, transparent: true, alphaTest: .08, side: THREE.DoubleSide });
+    const ropeMaterial = new THREE.LineBasicMaterial({ color: 0xf1e1bb });
+    const canopyMaterial = new THREE.MeshBasicMaterial({ color: 0xf04444, side: THREE.DoubleSide });
+    const box = new THREE.Mesh(new THREE.PlaneGeometry(2.5, 1.62), crateMaterial);
+    box.position.set(0, .18, .08);
+    root.add(box);
+    const canopy = new THREE.Mesh(new THREE.SphereGeometry(1.45, 24, 10, 0, Math.PI * 2, 0, Math.PI / 2), canopyMaterial);
+    canopy.position.y = 1.95;
+    root.add(canopy);
+    const parachuteParts = [canopy];
+    for (const side of [-1, 1]) {
+      const line = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(side * .72, .75, .05), new THREE.Vector3(side * 1.05, 1.7, 0)]);
+      const rope = new THREE.Line(line, ropeMaterial);
+      parachuteParts.push(rope);
+      root.add(rope);
+    }
+    return { root, parachuteParts, dispose: () => { root.removeFromParent(); root.traverse(child => child.geometry?.dispose()); crateMaterial.dispose(); crateTexture.dispose(); ropeMaterial.dispose(); canopyMaterial.dispose(); } };
+  }
+
+  spawnSupplyCrate() {
+    if (this.gameMode !== 'quick') return;
+    this.audio?.play('supplyCrateDrop');
+    let x = MAP.width / 2;
+    let bestDistance = -Infinity;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const candidate = THREE.MathUtils.clamp(5 + Math.random() * (MAP.width - 10), 2, MAP.width - 2);
+      const distance = Math.min(...this.worms.filter(w => w.alive).map(w => Math.abs(w.x - candidate)), MAP.width);
+      if (this.terrain.landingHeight(candidate, .85, .55) === null) continue;
+      if (distance >= 3.5) { x = candidate; break; }
+      if (distance > bestDistance) { bestDistance = distance; x = candidate; }
+    }
+    const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, MAP.height + 4).setLinearDamping(1.8).setAngularDamping(4.5).setCcdEnabled(true));
+    body.setGravityScale(1, true);
+    body.setLinvel({ x: 0, y: -8 }, true);
+    const collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(.85, .55).setMass(1).setFriction(1.5).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max).setRestitution(0).setCollisionGroups(0x00040001), body);
+    const visual = this.createSupplyCrate();
+    this.scene.add(visual.root);
+    const crate = { body, collider, visual, x, y: MAP.height + 4, type: this.randomSupplyWeapon(), landed: false, supplyCrate: true, dispose: () => { this.world.removeRigidBody(body); visual.dispose(); } };
+    this.supplyCrates.push(crate);
+    this.cameraFocus = crate;
+  }
+
+  updateSupplyCrates() {
+    for (let index = this.supplyCrates.length - 1; index >= 0; index--) {
+      const crate = this.supplyCrates[index];
+      const p = crate.body.translation();
+      crate.x = p.x;
+      crate.y = p.y;
+      const currentPosition = crate.body.translation();
+      crate.visual.root.position.set(currentPosition.x, currentPosition.y, .35);
+      crate.visual.root.rotation.z = crate.body.rotation();
+      const landingY = this.terrain.landingHeight(currentPosition.x, .85, .55);
+      if (!crate.landed && (crate.body.isSleeping() || (landingY !== null && currentPosition.y <= landingY + .16))) {
+        crate.landed = true;
+        crate.body.setAngvel(0, true);
+        if (this.cameraFocus === crate) this.cameraFocus = null;
+        for (const part of crate.visual.parachuteParts) part.visible = false;
+      }
+      const collector = this.worms.find(w => w.alive && Math.hypot(w.x - currentPosition.x, w.y - currentPosition.y) < 1.15);
+      if (!collector) continue;
+      this.addWeaponToTeam(collector.team, crate.type);
+      if (collector === this.active) this.weapons.message = `Подобрано: ${ARSENAL[crate.type]}`;
+      if (this.cameraFocus === crate) this.cameraFocus = null;
+      crate.dispose();
+      this.supplyCrates.splice(index, 1);
+    }
+  }
+
   rebuildTeamHealthHud() {
     this.teamHealthHud.replaceChildren();
     this.teamHealthCards = this.teams.map((team) => {
@@ -652,7 +828,7 @@ export class Game {
     });
   }
 
-  createExplosion(x, y, radius) { this.audio?.play('explosion'); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
+  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.weapons?.detonateSupplyCrates?.(x,y,radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
   damage(w, amount, force = false, impact = true) {
     if (!w.alive || (w.frozen && !force)) return;
     const previousHp = w.hp;
@@ -815,6 +991,7 @@ export class Game {
     this.world.step(this.events);
     this.weapons.update(dt);
     this.syncWorms(dt);
+    this.updateSupplyCrates();
     this.updateDisplayedHealth(dt);
   }
 
@@ -850,6 +1027,12 @@ export class Game {
             break;
           }
         }
+      }
+      // Убираем только мелкие вертикальные импульсы от контакта с поверхностью.
+      // Сильные импульсы взрыва и отбрасывания остаются без изменений.
+      if (w.grounded && w.vy > 0 && w.vy < 2.5) {
+        w.body.setLinvel({ x: w.vx, y: 0 }, true);
+        w.vy = 0;
       }
       if (!w.grounded) {
         w.airborneTime += dt;
@@ -980,7 +1163,7 @@ export class Game {
     const samples = [[0, .34], [-.28, .14], [.28, .14], [-.3, -.12], [.3, -.12], [0, -.49]];
     const isClear = y => samples.every(([dx, dy]) => !this.terrain.isSolid(position.x + dx, y + dy));
     const step = 1 / MAP.pixelsPerUnit;
-    for (let lift = step; lift <= 2.5; lift += step) {
+    for (let lift = step; lift <= 6; lift += step) {
       if (!isClear(position.y + lift)) continue;
       w.body.setTranslation({ x: position.x, y: position.y + lift + .03 }, true);
       const velocity = w.body.linvel();
@@ -1005,7 +1188,7 @@ export class Game {
         y = halfH >= MAP.height / 2 ? MAP.height / 2 : THREE.MathUtils.clamp(target.y, halfH, MAP.height - halfH);
       this.camera.position.x += (x - this.camera.position.x) * smoothing;
       this.camera.position.y += (y - this.camera.position.y) * smoothing;
-      if (this.cameraFocus && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
+      if (this.cameraFocus && !this.cameraFocus.supplyCrate && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
     }
     this.camera.updateMatrixWorld();
 
@@ -1015,6 +1198,9 @@ export class Game {
       const isWinningWorm = this.winner && this.winningTeam === w.team;
       w.mesh.visible = !w.invisible || w === this.active;
       w.label.hidden = w.invisible && w !== this.active;
+      const showJetpackFuel = w === this.active && this.weapons.movementMode?.mode === 'jetPack' && !this.winner;
+      w.fuelIndicator.hidden = !showJetpackFuel;
+      if (showJetpackFuel) w.fuelValue.textContent = String(Math.ceil(this.weapons.jetPackFuel ?? 100));
       const showTurnMarker = w === this.active && !this.activeMoved && !this.winner;
       w.turnMarker.hidden = !showTurnMarker;
       w.turnMarker.classList.toggle('turn-marker-spring', showTurnMarker && this.turnIntroTime <= 1.2);
@@ -1032,10 +1218,11 @@ export class Game {
       d.bodyPivot.position.y = p.bodyPosY;
       d.headGroup.position.y = p.headPosY;
       d.headGroup.rotation.set(p.headRotX, p.headRotY, p.headRotZ);
-      const isWalking = w.grounded && Math.abs(w.vx) > 0.3;
+      const isJetPackFlying = w === this.active && this.weapons.movementMode?.mode === 'jetPack';
+      const isWalking = !isJetPackFlying && w.grounded && Math.abs(w.vx) > 0.3;
       const isAirborne = !w.grounded;
       const isImpactTumbling = w.knockedDown && Math.hypot(w.vx, w.vy) > .55;
-      const isRecovering = w.recoveryTime > 0;
+      const isRecovering = !isJetPackFlying && w.recoveryTime > 0;
 
       // Отображение оружия у активного стрелка
       const isShootingActive = !this.winner && (w === this.active) && !isRecovering &&
@@ -1049,7 +1236,7 @@ export class Game {
           d.currentWeapon = this.turn.weapon;
         }
         d.weaponPivot.visible = false;
-        d.weaponMesh.visible = true;
+        d.weaponMesh.visible = !isJetPackFlying;
 
         // Поворот оружия по направлению прицеливания с учётом стороны взгляда
         const aimAngle = (w.facing > 0) ? this.angle : (Math.PI - this.angle);
@@ -1074,6 +1261,12 @@ export class Game {
         d.wingLPivot.rotation.set(.18, p.wingBaseRotY, p.wingBaseRotZ + flap * 1.05);
         d.wingRPivot.rotation.set(-.18, -p.wingBaseRotY, -p.wingBaseRotZ - flap * 1.05);
         d.tailPivot.rotation.set(0, p.tailRotY, p.tailRotZ + flap * .12);
+      } else if (isJetPackFlying) {
+        // Ранец держит червя вертикально: полёт не должен выглядеть как падение или кувырок.
+        w.mesh.rotation.z = 0;
+        d.bodyPivot.scale.set(1, 1, 1);
+        d.wingLPivot.rotation.z = p.wingBaseRotZ;
+        d.wingRPivot.rotation.z = -p.wingBaseRotZ;
       } else if (isRecovering) {
         const elapsed = 1.45 - w.recoveryTime;
         const side = w.recoverySide;
@@ -1286,16 +1479,18 @@ export class Game {
       </button>
     `;
     const trainingWeapons = [
+      ['jetPack', 'Управление полётом и посадка'],
       ['bazooka', 'Траектория и сила выстрела'],
+      ['homing', 'Наведение ракеты на цель'],
+      ['pigeon', 'Выбор цели и точное попадание'],
       ['grenade', 'Бросок, запал и отскок'],
       ['shotgun', 'Два точных выстрела'],
-      ['handgun', 'Серия быстрых выстрелов'],
-      ['uzi', 'Контроль очереди'],
-      ['dynamite', 'Установка и отход'],
-      ['mine', 'Ловушки и дистанция'],
-      ['sheep', 'Управляемый наземный заряд'],
+      ['longbow', 'Прямой выстрел и дальность'],
+      ['firePunch', 'Удар в упор и направление импульса'],
+      ['dynamite', 'Установка заряда и безопасный отход'],
+      ['sheep', 'Управляемая овечка и момент взрыва'],
       ['airstrike', 'Выбор зоны авиаудара'],
-      ['teleport', 'Безопасное перемещение']
+      ['ninjaRope', 'Зацеп, раскачка и отпускание']
     ];
     const trainingSelect = document.createElement('div');
     trainingSelect.className = 'training-select';

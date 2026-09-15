@@ -17,6 +17,7 @@ export const ARSENAL = Object.freeze({
   skipGo:'Пропуск хода', surrender:'Капитуляция', selectWorm:'Выбор червя', freeze:'Заморозка', magicBullet:'Волшебная пуля Простака',
   jetPack:'Реактивный ранец', lowGravity:'Низкая гравитация', fastWalk:'Быстрая ходьба', laserSight:'Лазерный прицел', invisibility:'Невидимость',
 });
+export const UNLIMITED_WEAPONS = new Set(['bazooka', 'grenade', 'firePunch', 'prod']);
 const COLORS = {bazooka:0xffd166,homing:0xff7799,pigeon:0xffffff,magicBullet:0x8b5cf6,mortar:0x94a3b8,grenade:0x70bd65,cluster:0xf5a742,fragment:0xffde99,dynamite:0xf04444,mine:0xf1b33c,sheep:0xffffff,moleBomb:0x8b5e3c,bomb:0x879cb5,napalm:0xf97316};
 const TARGET_WEAPONS = new Set(['homing','pigeon','magicBullet','airstrike','napalm','mailstrike','minestrike','moleSquadron','donkey','mbBomb','frenchSheep','carpet','girder','girderPack']);
 const GUN_WEAPONS = new Set(['handgun','uzi','minigun','longbow']);
@@ -24,7 +25,7 @@ const THROWN_GRENADES = new Set(['grenade','cluster','banana','superBanana','hol
 const GROUND_PROJECTILES = new Set(['bazooka','homing','pigeon','magicBullet','mortar','bomb','petrol','mbBomb','donkey','napalm','mailstrike','carpet','armageddon','frenchSheep']);
 export class Weapons {
   constructor(game) {
-    this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.projectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillDirection=0;this.movementMode=null;this.hazards=[];this.message='';
+    this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.projectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillDirection=0;this.movementMode=null;this.jetPackFuel=100;this.hazards=[];this.message='';
     this.ray=new RAPIER.Ray({x:0,y:0},{x:1,y:0});this.velocity={x:0,y:0};this.target={x:48,y:20};this.targetSet=false;
     this.byCollider=new Map();this.pool=[];this.geometry=new THREE.PlaneGeometry(1,1);
     for(let i=0;i<80;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial({transparent:true,alphaTest:.08,depthWrite:false,side:THREE.DoubleSide}));mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh});}
@@ -40,7 +41,7 @@ export class Weapons {
     const p=this.pool.find(item=>!item.active);if(!p)return null;
     const radius=(type==='sheep'||type==='superSheep'||type==='pigeon') ? .38 : type==='fragment' ? .12 : .23;
     const body=this.g.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x,y).setCcdEnabled(true));
-    const bounce=(type==='grenade'||type==='cluster'||type==='banana'||type==='superBanana') ? this.bounce : type==='holy' ? .2 : type==='fragment' ? .4 : 0;
+    const bounce=(type==='grenade'||type==='cluster'||type==='banana'||type==='superBanana') ? Math.min(this.bounce, .28) : type==='holy' ? .2 : type==='fragment' ? .15 : 0;
     const collider=this.g.world.createCollider(RAPIER.ColliderDesc.ball(radius).setMass(.4).setRestitution(bounce).setFriction(.65).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),body);
     if(this.dropping){vx=this.g.active.body.linvel().x;vy=this.g.active.body.linvel().y;}
     this.velocity.x=vx;this.velocity.y=vy;body.setLinvel(this.velocity,true);
@@ -65,7 +66,32 @@ export class Weapons {
     return false;
   }
   continueTurn(){this.g.turn.charge=0;this.g.turn.state=TURN.WAITING_INPUT;}
-  beginUtility(mode,duration=45){this.movementMode={mode,remaining:duration,owner:this.g.active,airborne:false};this.continueTurn();}
+  beginUtility(mode,duration=45){if(mode==='jetPack')this.jetPackFuel=100;this.movementMode={mode,remaining:duration,owner:this.g.active,airborne:false};this.continueTurn();}
+  createFireHazard(x,y,radius,damage,duration=3){
+    const g=this.g;
+    const hazard={kind:'fire',x,y,radius,damage,remaining:duration,duration,tick:0,age:0,visual:null};
+    if(g.scene){
+      const root=new THREE.Group(),materials=[];
+      const flameVertex=`varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`;
+      const flameFragment=`uniform float uTime;uniform float opacity;uniform vec3 outerColor;uniform vec3 innerColor;uniform float phase;varying vec2 vUv;float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}void main(){vec2 p=vUv*2.0-1.0;float t=uTime+phase;p.x+=sin(p.y*8.0+t*3.5)*0.09*(0.35+0.65*(p.y+1.0)/2.0);p.x+=sin(p.y*17.0-t*5.0)*0.035;float top=1.0-smoothstep(0.48,0.98,p.y);float bottom=smoothstep(-1.0,-0.78,p.y);float width=mix(0.62,0.07,clamp((p.y+1.0)*0.5,0.0,1.0));float edge=1.0-smoothstep(width,width+0.12,abs(p.x));float turbulence=noise(vec2(p.x*4.0+t*.35,p.y*5.0-t*.8));float flame=edge*smoothstep(0.16,0.52,turbulence+0.35)*top*bottom;float core=1.0-smoothstep(0.0,0.52,abs(p.x)+max(0.0,p.y)*0.18);vec3 color=mix(outerColor,innerColor,core);gl_FragColor=vec4(color,flame*opacity);}`;
+      const glowFragment=`uniform float opacity;varying vec2 vUv;void main(){vec2 p=vUv*2.0-1.0;float d=dot(p,p);float a=pow(max(0.0,1.0-d),2.2)*opacity;gl_FragColor=vec4(1.0,.18,.015,a);}`;
+      const makeMaterial=(fragment,uniforms,opacity)=>{const m=new THREE.ShaderMaterial({vertexShader:flameVertex,fragmentShader:fragment,uniforms,transparent:true,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});m.userData.baseOpacity=opacity;materials.push(m);return m;};
+      const glow=makeMaterial(glowFragment,{opacity:{value:.2}},.2);const glowMesh=new THREE.Mesh(new THREE.PlaneGeometry(radius*2.4,radius*1.1),glow);glowMesh.position.set(0,.05,-.04);root.add(glowMesh);
+      const outer=makeMaterial(flameFragment,{uTime:{value:0},opacity:{value:.88},outerColor:{value:new THREE.Color(0xff3b08)},innerColor:{value:new THREE.Color(0xffa313)},phase:{value:Math.random()*6.28}},.88);
+      const outerMesh=new THREE.Mesh(new THREE.PlaneGeometry(radius*1.15,radius*1.55),outer);outerMesh.position.set(0,radius*.7,.03);root.add(outerMesh);
+      const inner=makeMaterial(flameFragment,{uTime:{value:0},opacity:{value:.95},outerColor:{value:new THREE.Color(0xff8a08)},innerColor:{value:new THREE.Color(0xfff1a0)},phase:{value:Math.random()*6.28}},.95);
+      const innerMesh=new THREE.Mesh(new THREE.PlaneGeometry(radius*.62,radius*1.08),inner);innerMesh.position.set(0,radius*.48,.04);root.add(innerMesh);
+      const groundY=g.terrain?.landingHeight?.(x,.6,.04);root.position.set(x,groundY==null?y:groundY-.04,.36);g.scene.add(root);
+      hazard.visual={root,materials,dispose(){root.removeFromParent();root.traverse(node=>node.geometry?.dispose());for(const m of materials)m.dispose();}};
+    }
+    this.hazards.push(hazard);return hazard;
+  }
+  detonateSupplyCrates(x,y,radius){
+    const g=this.g;if(!g.supplyCrates?.length||g.supplyCrateChainReaction)return;
+    const targets=g.supplyCrates.filter(crate=>Math.hypot(crate.x-x,crate.y-y)<=radius+1.05);if(!targets.length)return;
+    g.supplyCrateChainReaction=true;
+    try{for(const crate of targets){const index=g.supplyCrates.indexOf(crate);if(index<0)continue;const cx=crate.x,cy=crate.y;crate.dispose();g.supplyCrates.splice(index,1);this.createFireHazard(cx,cy,2.5,12,3);this.explode(cx,cy,1.8,30);}}finally{g.supplyCrateChainReaction=false;}
+  }
   endUtility(finish=false){
     const drilling=this.drilling>0;this.drilling=0;this.movementMode=null;this.tether.visible=false;this.message='';
     if(!this.g.turn)return;
@@ -91,10 +117,10 @@ export class Weapons {
     const v=w.body.linvel(),pos=w.body.translation();
     if(!w.grounded)m.airborne=true;
     if(m.mode==='jetPack'){
-      if(x||y>0||m.retreat)m.remaining-=dt;
+      if(x||y>0||m.retreat){m.remaining-=dt*4;this.jetPackFuel=THREE.MathUtils.clamp(m.remaining/30*100,0,100);}
       w.body.setLinvel({x:THREE.MathUtils.clamp(v.x+x*18*dt,-7,7),y:THREE.MathUtils.clamp(v.y+Math.max(0,y)*24*dt,-9,8)},true);
       if(x||y>0)g.particles.emit(pos.x,pos.y-.7,.12);
-      this.message=`Ранец: ${Math.ceil(m.remaining/30*100)}% · WASD/стрелки — тяга · пробел — снять · Enter — сбросить оружие`;
+      this.message='WASD/стрелки — тяга · пробел — снять · Enter — сбросить оружие';
     }else if(m.mode==='parachute'){
       if(v.y<0)w.body.setLinvel({x:THREE.MathUtils.clamp(v.x+(x*5+g.wind)*dt,-5,5),y:Math.max(v.y,-(y<0?3:y>0?1:1.6))},true);
       if(m.airborne&&w.grounded){this.endUtility();return;}
@@ -191,7 +217,7 @@ export class Weapons {
       this.message=type==='sheep'||type==='superSheep'?'Пробел / ЛКМ — взорвать овечку':'Можно отойти: A/D, W';return true;
     }
     if(type==='sheepLauncher'){this.spawn('sheepLauncher',w.x+dx,w.y+dy,dx*32,dy*32,20);this.retreat=0;this.message='Пробел / ЛКМ — взорвать овечку';return true;}
-    if(['airstrike','napalm','mailstrike','minestrike','moleSquadron'].includes(type)){const dropType=type==='minestrike'?'mine':type==='moleSquadron'?'moleBomb':type==='napalm'?'napalm':type==='mailstrike'?'mailstrike':'bomb';const drops=type==='moleSquadron'?4:type==='airstrike'?5:6;for(let i=0;i<drops;i++)this.spawn(dropType,THREE.MathUtils.clamp(this.target.x+(i-(drops-1)/2)*2.6,1,MAP.width-1),MAP.height+3+i*1.4,w.facing*3,-9,type==='minestrike'?Infinity:12);this.resetTarget();return true;}
+    if(['airstrike','napalm','mailstrike','minestrike','moleSquadron'].includes(type)){const dropType=type==='minestrike'?'mine':type==='moleSquadron'?'moleBomb':type==='airstrike'||type==='napalm'?'napalm':type==='mailstrike'?'mailstrike':'bomb';const drops=type==='moleSquadron'?4:type==='airstrike'?5:6;for(let i=0;i<drops;i++)this.spawn(dropType,THREE.MathUtils.clamp(this.target.x+(i-(drops-1)/2)*2.6,1,MAP.width-1),MAP.height+3+i*1.4,w.facing*3,-9,type==='minestrike'?Infinity:12);this.resetTarget();return true;}
     if(type==='madCows'){for(let i=0;i<this.cowCount;i++){const p=this.spawn('madCow',w.x+w.facing,w.y+.2,0,0,20);p.delay=i*.6;p.body.setEnabled(false);p.mesh.visible=false;}return true;}
     if(type==='frenchSheep'){for(let i=0;i<5;i++)this.spawn('frenchSheep',THREE.MathUtils.clamp(this.target.x+(i-2)*1.8,1,MAP.width-1),MAP.height+3+i,w.facing*2,-9,20);this.resetTarget();return true;}
     if(type==='carpet'||type==='armageddon'){const count=type==='carpet'?8:12;for(let i=0;i<count;i++)this.spawn(type,THREE.MathUtils.clamp(type==='armageddon'?Math.random()*MAP.width:this.target.x+(i-(count-1)/2)*2.2,1,MAP.width-1),MAP.height+3+i*.7,1,-10,12);this.resetTarget();return true;}
@@ -216,7 +242,7 @@ export class Weapons {
       else if(f.tick<=0){f.tick=.15;const w=f.owner,dx=Math.cos(g.angle),dy=Math.sin(g.angle);
         this.ray.origin={x:w.x,y:w.y};this.ray.dir={x:dx,y:dy};
         const hit=g.world.castRay(this.ray,5,true,undefined,undefined,w.collider,w.body),reach=hit?hit.timeOfImpact:5;
-        for(let d=.8;d<=reach+.1;d+=.6){const x=w.x+dx*d+g.wind*.04*d,y=w.y+dy*d;g.particles.emit(x,y,.25);this.hazards.push({kind:'fire',x,y,radius:.5,damage:3,remaining:.3,tick:0});}
+        for(let d=.8;d<=reach+.1;d+=.6){const x=w.x+dx*d+g.wind*.04*d,y=w.y+dy*d;g.particles.emit(x,y,.25);this.createFireHazard(x,y,.5,3,.3);}
         if(hit)g.createExplosion(w.x+dx*reach,w.y+dy*reach,.4);
       }
     }
@@ -231,9 +257,10 @@ export class Weapons {
     }
     if(this.burst){const b=this.burst;b.tick-=dt;if(!b.owner.alive)this.burst=null;else if(b.tick<=0){this.fireGun(b.type);b.left--;b.tick=.1;if(!b.left)this.burst=null;}}
     for(let i=this.hazards.length-1;i>=0;i--){
-      const hazard=this.hazards[i];hazard.remaining-=dt;hazard.tick-=dt;
+      const hazard=this.hazards[i];hazard.remaining-=dt;hazard.tick-=dt;hazard.age=(hazard.age||0)+dt;
+      if(hazard.visual){const fade=THREE.MathUtils.clamp(hazard.remaining/hazard.duration,0,1);hazard.visual.root.scale.setScalar(.92+.1*Math.sin(hazard.age*18));for(const child of hazard.visual.root.children)if(child.material){if(child.material.uniforms?.uTime)child.material.uniforms.uTime.value=hazard.age;if(child.material.uniforms?.opacity)child.material.uniforms.opacity.value=fade*child.material.userData.baseOpacity;else child.material.opacity=fade*child.material.userData.baseOpacity;}}
       if(hazard.tick<=0){hazard.tick=1;for(const worm of g.worms)if(worm.alive&&!worm.frozen&&Math.hypot(worm.x-hazard.x,worm.y-hazard.y)<hazard.radius){if(hazard.kind==='poison')worm.poison=Math.max(worm.poison||0,hazard.damage);else g.damage(worm,hazard.damage,false,false);}}
-      if(hazard.remaining<=0)this.hazards.splice(i,1);
+      if(hazard.remaining<=0){hazard.visual?.dispose();this.hazards.splice(i,1);}
     }
     if(this.drilling>0){
       this.drilling=Math.max(0,this.drilling-dt);this.drillTick-=dt;
@@ -313,7 +340,7 @@ export class Weapons {
         if(part){this.g.weaponArt.projectile(part,type==='superBanana'?'banana':type,.12);part.owner=owner;part.damageOverride=type==='cluster'?30:type==='mingVase'?25:75;part.radiusOverride=type==='cluster'||type==='mingVase'?1.3:3.2;part.remoteFragment=type==='superBanana';}}
     }
     if(type==='mortar')for(let i=0;i<5;i++){const a=Math.PI/2+(i-2)*.18,part=this.spawn('fragment',x,y,Math.cos(a)*8,Math.sin(a)*10,1.2);if(part){part.owner=owner;part.damageOverride=30;}}
-    if(type==='petrol'||type==='napalm'||type==='frenchSheep')this.hazards.push({kind:'fire',x,y,radius:type==='napalm'?3.5:2.8,damage:type==='napalm'?12:15,remaining:type==='napalm'?4:5,tick:.2});
+    if(type==='petrol'||type==='napalm'||type==='frenchSheep')this.createFireHazard(x,y,type==='napalm'?3.5:2.8,type==='napalm'?12:15,3);
     if(type==='skunk')this.hazards.push({kind:'poison',x,y,radius:3.5,damage:5,remaining:8,tick:.2});
   }
   explode(x,y,r,damage){
@@ -345,5 +372,5 @@ export class Weapons {
       g.particles.emit(x,y,.35);
     }
   }
-  dispose(){this.tether.removeFromParent();this.tether.geometry.dispose();this.tether.material.dispose();for(const p of this.pool){p.mesh.removeFromParent();p.mesh.material.dispose();}this.geometry.dispose();this.marker.removeFromParent();this.marker.geometry.dispose();this.marker.material.dispose();}
+  dispose(){for(const hazard of this.hazards)hazard.visual?.dispose();this.hazards.length=0;this.tether.removeFromParent();this.tether.geometry.dispose();this.tether.material.dispose();for(const p of this.pool){p.mesh.removeFromParent();p.mesh.material.dispose();}this.geometry.dispose();this.marker.removeFromParent();this.marker.geometry.dispose();this.marker.material.dispose();}
 }
