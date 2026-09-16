@@ -774,30 +774,56 @@ export class Game {
     }
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x, MAP.height + 4).setLinearDamping(1.8).setAngularDamping(4.5).setCcdEnabled(true));
     body.setGravityScale(1, true);
+    body.lockRotations(true, true);
     body.setLinvel({ x: 0, y: -8 }, true);
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(.85, .55).setMass(1).setFriction(1.5).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max).setRestitution(0).setCollisionGroups(0x00040001), body);
     const visual = this.createSupplyCrate();
     this.scene.add(visual.root);
-    const crate = { body, collider, visual, x, y: MAP.height + 4, type: this.randomSupplyWeapon(), landed: false, supplyCrate: true, dispose: () => { this.world.removeRigidBody(body); visual.dispose(); } };
+    const crate = { body, collider, visual, x, y: MAP.height + 4, type: this.randomSupplyWeapon(), landed: false, parachuteTime: 0, parachuteReleased: false, angleFrom: 0, angleTo: 0, angleBlend: 1, supplyCrate: true, dispose: () => { this.world.removeRigidBody(body); visual.dispose(); } };
     this.supplyCrates.push(crate);
     this.cameraFocus = crate;
   }
 
-  updateSupplyCrates() {
+  updateSupplyCrates(dt) {
     for (let index = this.supplyCrates.length - 1; index >= 0; index--) {
       const crate = this.supplyCrates[index];
       const p = crate.body.translation();
       crate.x = p.x;
       crate.y = p.y;
+      if (!crate.landed && !crate.parachuteReleased) {
+        crate.parachuteTime += dt;
+        if (crate.parachuteTime >= 2) {
+          crate.parachuteReleased = true;
+          for (const part of crate.visual.parachuteParts) part.visible = false;
+          crate.body.setGravityScale(2.5, true);
+          crate.body.setLinvel({ x: crate.body.linvel().x, y: -14 }, true);
+        }
+      }
       const currentPosition = crate.body.translation();
       crate.visual.root.position.set(currentPosition.x, currentPosition.y, .35);
       crate.visual.root.rotation.z = crate.body.rotation();
-      const landingY = this.terrain.landingHeight(currentPosition.x, .85, .55);
-      if (!crate.landed && (crate.body.isSleeping() || (landingY !== null && currentPosition.y <= landingY + .16))) {
+      const landingHeights = [-.85, -.42, 0, .42, .85].map(offset => this.terrain.landingHeight(currentPosition.x + offset, .08, .55)).filter(value => value !== null);
+      const landingY = landingHeights.length ? Math.max(...landingHeights) : null;
+      if (!crate.landed && landingY !== null && currentPosition.y <= landingY + .24 && crate.body.linvel().y <= .5) {
         crate.landed = true;
+        const leftY = this.terrain.landingHeight(currentPosition.x - .7, .08, .55);
+        const rightY = this.terrain.landingHeight(currentPosition.x + .7, .08, .55);
+        const slopeAngle = leftY !== null && rightY !== null ? Math.atan2(rightY - leftY, 1.4) : 0;
+        crate.angleFrom = crate.body.rotation();
+        crate.angleTo = slopeAngle;
+        crate.angleBlend = 0;
+        crate.body.setLinvel({ x: 0, y: 0 }, true);
         crate.body.setAngvel(0, true);
+        crate.body.lockRotations(true, true);
         if (this.cameraFocus === crate) this.cameraFocus = null;
         for (const part of crate.visual.parachuteParts) part.visible = false;
+      }
+      if (crate.landed && crate.angleBlend < 1) {
+        crate.angleBlend = Math.min(1, crate.angleBlend + dt / .25);
+        const blend = 1 - Math.pow(1 - crate.angleBlend, 2);
+        const angle = crate.angleFrom + (crate.angleTo - crate.angleFrom) * blend;
+        crate.body.setRotation(angle, true);
+        crate.visual.root.rotation.z = angle;
       }
       const collector = this.worms.find(w => w.alive && Math.hypot(w.x - currentPosition.x, w.y - currentPosition.y) < 1.15);
       if (!collector) continue;
@@ -894,7 +920,7 @@ export class Game {
     if (this.winner) this.victoryTime += dt;
     else { this.turn.update(dt); this.bot.update(dt); }
 
-    if (this.humanInput() && this.turnIntroTime <= 0 && this.active.recoveryTime <= 0 && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
+    if (this.humanInput() && this.turnIntroTime <= 0 && this.active.recoveryTime <= 0 && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.flame) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
 
       const w = this.active,
         direction = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
@@ -965,7 +991,7 @@ export class Game {
       const tangentSpeed = velocity.x * ny - velocity.y * nx;
       let tangentDelta = this.world.gravity.y * nx * dt;
       const moving = w === this.active && this.humanInput() &&
-        (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.movementMode) &&
+        (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.movementMode || this.weapons.flame) &&
         (this.keys.has('KeyA') || this.keys.has('KeyD') || this.keys.has('ArrowLeft') || this.keys.has('ArrowRight'));
 
       if (!moving) {
@@ -991,7 +1017,7 @@ export class Game {
     this.world.step(this.events);
     this.weapons.update(dt);
     this.syncWorms(dt);
-    this.updateSupplyCrates();
+    this.updateSupplyCrates(dt);
     this.updateDisplayedHealth(dt);
   }
 
@@ -1431,7 +1457,7 @@ export class Game {
       if (!this.humanInput() || this.weaponPanel.open || this.turnIntroTime > 0) return;
       const rect = this.canvas.getBoundingClientRect();
       this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
-      if (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT) {
+      if (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || this.weapons.flame) {
         this.angle = Math.atan2(this.vector.y - this.active.y, this.vector.x - this.active.x);
         this.active.facing = Math.cos(this.angle) < 0 ? -1 : 1;
         this.activeMoved = true; // <-- Мышь сдвинулась для прицела — плашка исчезает

@@ -6,7 +6,7 @@ const ALIASES = { bomb: 'homing', madCow: 'madCows', fragment: 'cluster' };
 const WALKERS = new Set(['sheep', 'superSheep', 'sheepLauncher', 'moleBomb', 'madCow', 'oldWoman', 'salvation', 'skunk', 'donkey', 'mbBomb']);
 
 export class WeaponArt {
-  constructor(ids) { this.ids = ids; this.textures = new Map(); }
+  constructor(ids) { this.ids = ids; this.textures = new Map(); this.flameTexture = null; }
   async load() {
     const image = new Image();
     image.src = `${import.meta.env.BASE_URL}assets/weapon-atlas.png`;
@@ -64,7 +64,31 @@ export class WeaponArt {
     if (!thought) icon.position.x = .37;
     return group;
   }
+  fireballTexture() {
+    if (this.flameTexture) return this.flameTexture;
+    const canvas = document.createElement('canvas');
+    canvas.width = 64; canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createRadialGradient(32, 32, 2, 32, 32, 31);
+    gradient.addColorStop(0, 'rgba(255,255,235,1)');
+    gradient.addColorStop(.28, 'rgba(255,244,120,1)');
+    gradient.addColorStop(.62, 'rgba(255,145,20,.95)');
+    gradient.addColorStop(1, 'rgba(255,70,0,0)');
+    ctx.fillStyle = gradient;
+    ctx.beginPath(); ctx.arc(32, 32, 31, 0, Math.PI * 2); ctx.fill();
+    this.flameTexture = new THREE.CanvasTexture(canvas);
+    this.flameTexture.colorSpace = THREE.SRGBColorSpace;
+    return this.flameTexture;
+  }
   projectile(p, type, radius) {
+    if (type === 'flameShot') {
+      p.mesh.material.map = this.fireballTexture();
+      p.mesh.material.color.setHex(0xffffff);
+      p.mesh.material.needsUpdate = true;
+      p.mesh.scale.set(.72, .72, 1);
+      p.mesh.rotation.z = 0;
+      return;
+    }
     const iconType = type === 'sheepLauncher' ? 'sheep' : type;
     p.mesh.material.map = this.texture(iconType);
     p.mesh.material.color.setHex(0xffffff);

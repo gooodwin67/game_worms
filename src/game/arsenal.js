@@ -22,31 +22,44 @@ const COLORS = {bazooka:0xffd166,homing:0xff7799,pigeon:0xffffff,magicBullet:0x8
 const TARGET_WEAPONS = new Set(['homing','pigeon','magicBullet','airstrike','napalm','mailstrike','minestrike','moleSquadron','donkey','mbBomb','frenchSheep','carpet','girder','girderPack']);
 const GUN_WEAPONS = new Set(['handgun','uzi','minigun','longbow']);
 const THROWN_GRENADES = new Set(['grenade','cluster','banana','superBanana','holy']);
-const GROUND_PROJECTILES = new Set(['bazooka','homing','pigeon','magicBullet','mortar','bomb','petrol','mbBomb','donkey','napalm','mailstrike','carpet','armageddon','frenchSheep']);
+const GROUND_PROJECTILES = new Set(['bazooka','homing','pigeon','magicBullet','mortar','bomb','petrol','mbBomb','donkey','napalm','flameShot','mailstrike','carpet','armageddon','frenchSheep']);
 export class Weapons {
   constructor(game) {
     this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.projectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillDirection=0;this.movementMode=null;this.jetPackFuel=100;this.hazards=[];this.message='';
     this.ray=new RAPIER.Ray({x:0,y:0},{x:1,y:0});this.velocity={x:0,y:0};this.target={x:48,y:20};this.targetSet=false;
     this.byCollider=new Map();this.pool=[];this.geometry=new THREE.PlaneGeometry(1,1);
-    for(let i=0;i<80;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial({transparent:true,alphaTest:.08,depthWrite:false,side:THREE.DoubleSide}));mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh});}
+    for(let i=0;i<160;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial({transparent:true,alphaTest:.08,depthWrite:false,side:THREE.DoubleSide}));mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh});}
+    this.fireParticles=this.createFireParticleSystem(256);
     this.tether=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),new THREE.LineBasicMaterial({color:0xe6cf9b}));this.tether.frustumCulled=false;this.tether.visible=false;game.scene.add(this.tether);
     this.marker=new THREE.Mesh(new THREE.RingGeometry(.5,.65,24),new THREE.MeshBasicMaterial({color:0xff7799}));this.marker.visible=false;game.scene.add(this.marker);
-    this.onCollision=(a,b,started)=>{if(!started)return;const p=this.byCollider.get(a),q=this.byCollider.get(b);if(p)p.hit=true;if(q)q.hit=true;};
+    this.onCollision=(a,b,started)=>{if(!started)return;const p=this.byCollider.get(a),q=this.byCollider.get(b);if(p&&p.type!=='flameShot'&&!(p.ignoreOwner&&this.g.wormByCollider.get(b)===p.ignoreOwner))p.hit=true;if(q&&q.type!=='flameShot'&&!(q.ignoreOwner&&this.g.wormByCollider.get(a)===q.ignoreOwner))q.hit=true;};
   }
   resetTarget(){this.targetSet=false;this.marker.visible=false;this.message='';}
   setTarget(x,y){this.target.x=THREE.MathUtils.clamp(x,.7,MAP.width-.7);this.target.y=THREE.MathUtils.clamp(y,.8,MAP.height-1);this.targetSet=true;this.marker.position.set(this.target.x,this.target.y,.5);this.marker.visible=true;this.message='Цель выбрана';}
+  createFireParticleSystem(maxParticles){
+    const geometry=new THREE.BufferGeometry();
+    const positions=new Float32Array(maxParticles*3),colors=new Float32Array(maxParticles*4),sizes=new Float32Array(maxParticles),lifes=new Float32Array(maxParticles);
+    const vertexShader=`attribute float aSize;attribute float aLife;varying float vLife;varying vec4 vColor;void main(){vLife=aLife;vColor=color;vec4 mvPosition=modelViewMatrix*vec4(position,1.0);gl_Position=projectionMatrix*mvPosition;gl_PointSize=aSize;}`;
+    const fragmentShader=`uniform float uTime;varying float vLife;varying vec4 vColor;void main(){vec2 p=gl_PointCoord*2.0-1.0;float d=length(p);if(d>1.0)discard;float edge=smoothstep(1.0,.05,d);float flicker=.88+.12*sin(uTime*9.0+vLife*31.0);float core=1.0-smoothstep(.05,.65,d);vec3 color=mix(vColor.rgb,vec3(1.0,.88,.42),core*.72);gl_FragColor=vec4(color,vColor.a*edge*flicker);}`;
+    const material=new THREE.ShaderMaterial({vertexShader,fragmentShader,uniforms:{uTime:{value:0}},vertexColors:true,transparent:true,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending});
+    geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));geometry.setAttribute('color',new THREE.BufferAttribute(colors,4));geometry.setAttribute('aSize',new THREE.BufferAttribute(sizes,1));geometry.setAttribute('aLife',new THREE.BufferAttribute(lifes,1));
+    const mesh=new THREE.Points(geometry,material);mesh.frustumCulled=false;this.g.scene.add(mesh);
+    const particles=Array.from({length:maxParticles},(_,index)=>({index,active:false,life:0,maxLife:0,x:0,y:0,vx:0,vy:0,size:0,seed:Math.random()}));
+    return {maxParticles,geometry,material,mesh,positions,colors,sizes,lifes,particles,next:0};
+  }
   needsCharge(type){return ['bazooka','homing','grenade','cluster','banana','superBanana','holy','petrol'].includes(type);}
   usesTarget(type){return TARGET_WEAPONS.has(type)||type==='teleport';}
   spawn(type,x,y,vx,vy,remaining=3){
     const p=this.pool.find(item=>!item.active);if(!p)return null;
     const radius=(type==='sheep'||type==='superSheep'||type==='pigeon') ? .38 : type==='fragment' ? .12 : .23;
     const body=this.g.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(x,y).setCcdEnabled(true));
+    if(type==='flameShot')body.setGravityScale(0,true);
     const bounce=(type==='grenade'||type==='cluster'||type==='banana'||type==='superBanana') ? Math.min(this.bounce, .28) : type==='holy' ? .2 : type==='fragment' ? .15 : 0;
-    const collider=this.g.world.createCollider(RAPIER.ColliderDesc.ball(radius).setMass(.4).setRestitution(bounce).setFriction(.65).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),body);
+    const collider=this.g.world.createCollider(RAPIER.ColliderDesc.ball(radius).setMass(.4).setRestitution(bounce).setFriction(.65).setSensor(type==='flameShot').setActiveEvents(type==='flameShot'?0:RAPIER.ActiveEvents.COLLISION_EVENTS),body);
     if(this.dropping){vx=this.g.active.body.linvel().x;vy=this.g.active.body.linvel().y;}
     this.velocity.x=vx;this.velocity.y=vy;body.setLinvel(this.velocity,true);
     if(['bazooka','napalm','mailstrike','mbBomb'].includes(type))body.addForce({x:this.g.wind*body.mass(),y:0},true);
-    Object.assign(p,{active:true,body,collider,type,remaining,age:0,x,y,hit:false,triggered:false,owner:this.g.active,ownerClear:false,dir:this.g.active?.facing||1,targetX:this.target.x,targetY:this.target.y,gas:false,stage:'walking',heading:Math.PI/2,damageOverride:null,radiusOverride:null,remoteFragment:false,tick:0,bounces:0,delay:0});
+    Object.assign(p,{active:true,body,collider,type,remaining,age:0,x,y,hit:false,triggered:false,owner:this.g.active,ownerClear:false,dir:this.g.active?.facing||1,targetX:this.target.x,targetY:this.target.y,gas:false,stage:'walking',heading:Math.PI/2,damageOverride:null,radiusOverride:null,remoteFragment:false,tick:0,bounces:0,delay:0,flameStartX:x,flameStartY:y,flameVx:vx,flameInitialVy:vy,flameDrop:0,flameDistance:5.33,flameWobbleAmp:.45+Math.random()*.25,flameWobbleFreq:10+Math.random()*5,flameWobblePhase:Math.random()*Math.PI*2,flameWobblePhase2:Math.random()*Math.PI*2});
     this.g.weaponArt.projectile(p,type,radius);p.mesh.position.set(x,y,.2);p.mesh.visible=true;
     this.byCollider.set(collider.handle,p);return p;
   }
@@ -67,22 +80,16 @@ export class Weapons {
   }
   continueTurn(){this.g.turn.charge=0;this.g.turn.state=TURN.WAITING_INPUT;}
   beginUtility(mode,duration=45){if(mode==='jetPack')this.jetPackFuel=100;this.movementMode={mode,remaining:duration,owner:this.g.active,airborne:false};this.continueTurn();}
-  createFireHazard(x,y,radius,damage,duration=3){
-    const g=this.g;
-    const hazard={kind:'fire',x,y,radius,damage,remaining:duration,duration,tick:0,age:0,visual:null};
-    if(g.scene){
-      const root=new THREE.Group(),materials=[];
-      const flameVertex=`varying vec2 vUv;void main(){vUv=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`;
-      const flameFragment=`uniform float uTime;uniform float opacity;uniform vec3 outerColor;uniform vec3 innerColor;uniform float phase;varying vec2 vUv;float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.0-2.0*f);return mix(mix(hash(i),hash(i+vec2(1,0)),f.x),mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x),f.y);}void main(){vec2 p=vUv*2.0-1.0;float t=uTime+phase;p.x+=sin(p.y*8.0+t*3.5)*0.09*(0.35+0.65*(p.y+1.0)/2.0);p.x+=sin(p.y*17.0-t*5.0)*0.035;float top=1.0-smoothstep(0.48,0.98,p.y);float bottom=smoothstep(-1.0,-0.78,p.y);float width=mix(0.62,0.07,clamp((p.y+1.0)*0.5,0.0,1.0));float edge=1.0-smoothstep(width,width+0.12,abs(p.x));float turbulence=noise(vec2(p.x*4.0+t*.35,p.y*5.0-t*.8));float flame=edge*smoothstep(0.16,0.52,turbulence+0.35)*top*bottom;float core=1.0-smoothstep(0.0,0.52,abs(p.x)+max(0.0,p.y)*0.18);vec3 color=mix(outerColor,innerColor,core);gl_FragColor=vec4(color,flame*opacity);}`;
-      const glowFragment=`uniform float opacity;varying vec2 vUv;void main(){vec2 p=vUv*2.0-1.0;float d=dot(p,p);float a=pow(max(0.0,1.0-d),2.2)*opacity;gl_FragColor=vec4(1.0,.18,.015,a);}`;
-      const makeMaterial=(fragment,uniforms,opacity)=>{const m=new THREE.ShaderMaterial({vertexShader:flameVertex,fragmentShader:fragment,uniforms,transparent:true,depthWrite:false,depthTest:true,blending:THREE.AdditiveBlending,side:THREE.DoubleSide});m.userData.baseOpacity=opacity;materials.push(m);return m;};
-      const glow=makeMaterial(glowFragment,{opacity:{value:.2}},.2);const glowMesh=new THREE.Mesh(new THREE.PlaneGeometry(radius*2.4,radius*1.1),glow);glowMesh.position.set(0,.05,-.04);root.add(glowMesh);
-      const outer=makeMaterial(flameFragment,{uTime:{value:0},opacity:{value:.88},outerColor:{value:new THREE.Color(0xff3b08)},innerColor:{value:new THREE.Color(0xffa313)},phase:{value:Math.random()*6.28}},.88);
-      const outerMesh=new THREE.Mesh(new THREE.PlaneGeometry(radius*1.15,radius*1.55),outer);outerMesh.position.set(0,radius*.7,.03);root.add(outerMesh);
-      const inner=makeMaterial(flameFragment,{uTime:{value:0},opacity:{value:.95},outerColor:{value:new THREE.Color(0xff8a08)},innerColor:{value:new THREE.Color(0xfff1a0)},phase:{value:Math.random()*6.28}},.95);
-      const innerMesh=new THREE.Mesh(new THREE.PlaneGeometry(radius*.62,radius*1.08),inner);innerMesh.position.set(0,radius*.48,.04);root.add(innerMesh);
-      const groundY=g.terrain?.landingHeight?.(x,.6,.04);root.position.set(x,groundY==null?y:groundY-.04,.36);g.scene.add(root);
-      hazard.visual={root,materials,dispose(){root.removeFromParent();root.traverse(node=>node.geometry?.dispose());for(const m of materials)m.dispose();}};
+  createFireHazard(x,y,radius,damage,duration=6,surfaceY=null){
+    // Любой источник огня использует одну и ту же точку ближайшей поверхности:
+    // бутылка, напалм, авиаудар, ящик и огнемёт не имеют отдельных правил.
+    const hazard={kind:'fire',x,y,radius,damage,remaining:duration,duration,tick:0,tickInterval:1,age:0,smokeRemaining:0,particleSlots:[]};
+    const system=this.fireParticles;
+    const particleCount=Math.min(18,Math.max(8,Math.round(radius*5)));
+    for(let i=0;i<particleCount;i++){
+      let p=null;for(let attempt=0;attempt<system.maxParticles;attempt++){const candidate=system.particles[system.next];system.next=(system.next+1)%system.maxParticles;if(!candidate.active){p=candidate;break;}}
+      if(!p)break;
+      hazard.particleSlots.push(p);p.active=true;p.grounded=false;p.supportCheck=0;p.smokeStarted=false;p.smokeAge=0;p.renderY=y;p.life=duration;p.maxLife=duration;p.x=x+(Math.random()-.5)*radius*1.4;p.y=y+.15+Math.random()*.25;p.vx=(Math.random()-.5)*radius*.22;p.vy=-2.2;p.size=7+Math.random()*10+radius*1.5;p.seed=Math.random()*10;
     }
     this.hazards.push(hazard);return hazard;
   }
@@ -90,7 +97,7 @@ export class Weapons {
     const g=this.g;if(!g.supplyCrates?.length||g.supplyCrateChainReaction)return;
     const targets=g.supplyCrates.filter(crate=>Math.hypot(crate.x-x,crate.y-y)<=radius+1.05);if(!targets.length)return;
     g.supplyCrateChainReaction=true;
-    try{for(const crate of targets){const index=g.supplyCrates.indexOf(crate);if(index<0)continue;const cx=crate.x,cy=crate.y;crate.dispose();g.supplyCrates.splice(index,1);this.createFireHazard(cx,cy,2.5,12,3);this.explode(cx,cy,1.8,30);}}finally{g.supplyCrateChainReaction=false;}
+    try{for(const crate of targets){const index=g.supplyCrates.indexOf(crate);if(index<0)continue;const cx=crate.x,cy=crate.y;crate.dispose();g.supplyCrates.splice(index,1);this.createFireHazard(cx,cy,2.5,12,6);this.explode(cx,cy,1.8,30);}}finally{g.supplyCrateChainReaction=false;}
   }
   endUtility(finish=false){
     const drilling=this.drilling>0;this.drilling=0;this.movementMode=null;this.tether.visible=false;this.message='';
@@ -234,16 +241,53 @@ export class Weapons {
     this.spawn(type,w.x+dx*offset,w.y+dy*offset,dx*speed,dy*speed,type==='grenade'||type==='cluster'?this.fuse:12);
     return true;
   }
+  updateFireParticles(dt){
+    const system=this.fireParticles,positions=system.positions,colors=system.colors,sizes=system.sizes,lifes=system.lifes;
+    const friction=Math.pow(.35,dt);
+    const terrain=this.g.terrain;
+    system.material.uniforms.uTime.value+=dt;
+    for(const hazard of this.hazards)if(hazard.kind==='fire'){
+      if(hazard.remaining<=0){if(hazard.smokeRemaining<=0)hazard.smokeRemaining=1.5;hazard.smokeRemaining-=dt;}
+      for(const p of hazard.particleSlots){
+      if(!p.active)continue;
+      if(hazard.remaining<=0&&hazard.smokeRemaining<=0){p.active=false;continue;}
+      if(!p.grounded){
+        const previousY=p.y;
+        p.vy+=GRAVITY*dt;p.vx*=friction;p.x+=p.vx*dt;p.y+=p.vy*dt;
+        if(terrain){
+          let impactY=null;
+          if(p.vy<=0){
+            for(let probe=previousY;probe>=p.y;probe-=.04)if(terrain.isSolid(p.x,probe)){impactY=probe;break;}
+          }
+          if(impactY==null&&terrain.isSolid(p.x,p.y))impactY=p.y;
+          if(impactY!=null){
+            let surfaceY=impactY;
+            for(let lift=0;lift<=3&&terrain.isSolid(p.x,surfaceY);lift+=.04)surfaceY+=.04;
+            if(!terrain.isSolid(p.x,surfaceY)){p.y=surfaceY+.015;p.vy=0;p.vx*=.18;p.grounded=true;}
+          }
+        }
+      }
+      const index=p.index,ratio=THREE.MathUtils.clamp(hazard.remaining/hazard.duration,0,1),smoke=p.grounded&&(hazard.remaining<=0||ratio<.18),smokeRatio=hazard.remaining<=0?THREE.MathUtils.clamp(hazard.smokeRemaining/1.5,0,1):THREE.MathUtils.clamp((.18-ratio)/.18,0,1),phase=system.material.uniforms.uTime.value*6+p.seed,orbitX=p.grounded&&!smoke?Math.cos(phase)*.12:0,orbitY=p.grounded&&!smoke?Math.sin(phase)*.12:0,smokeSway=smoke?Math.sin(system.material.uniforms.uTime.value*3.2+p.seed)*.18:0;
+      if(smoke&&!p.smokeStarted){p.smokeStarted=true;p.smokeAge=0;p.smokeBaseY=p.renderY??p.y;}
+      if(smoke)p.smokeAge+=dt;
+      const smokeRise=smoke?p.smokeAge*.85:0;
+      const renderY=smoke?p.smokeBaseY+smokeRise:p.y+orbitY;
+      if(!smoke)p.renderY=renderY;else p.renderY=renderY;
+      positions[index*3]=p.x+orbitX+smokeSway;positions[index*3+1]=renderY;positions[index*3+2]=.42;
+      const airborneFade=hazard.remaining<=0?THREE.MathUtils.clamp(hazard.smokeRemaining/1.5,0,1):1;
+      colors[index*4]=smoke?.18:1;colors[index*4+1]=smoke?.18:.18+.72*ratio;colors[index*4+2]=smoke?.2:.02;colors[index*4+3]=smoke?smokeRatio*.55:(hazard.remaining<=0?airborneFade*.25:.82);sizes[index]=p.size*(smoke?1.8:1);lifes[index]=ratio;
+      }
+    }
+    for(let i=0;i<system.maxParticles;i++)if(!system.particles[i].active){sizes[i]=0;lifes[i]=0;colors[i*4+3]=0;}
+    system.geometry.attributes.position.needsUpdate=true;system.geometry.attributes.color.needsUpdate=true;system.geometry.attributes.aSize.needsUpdate=true;system.geometry.attributes.aLife.needsUpdate=true;
+  }
   update(dt) {
     const g=this.g;g.events.drainCollisionEvents(this.onCollision);this.retreat=Math.max(0,this.retreat-dt);this.projectile=null;
     if(this.flame){
       const f=this.flame;f.remaining-=dt;f.tick-=dt;
       if(!f.owner.alive||f.remaining<=0)this.flame=null;
-      else if(f.tick<=0){f.tick=.15;const w=f.owner,dx=Math.cos(g.angle),dy=Math.sin(g.angle);
-        this.ray.origin={x:w.x,y:w.y};this.ray.dir={x:dx,y:dy};
-        const hit=g.world.castRay(this.ray,5,true,undefined,undefined,w.collider,w.body),reach=hit?hit.timeOfImpact:5;
-        for(let d=.8;d<=reach+.1;d+=.6){const x=w.x+dx*d+g.wind*.04*d,y=w.y+dy*d;g.particles.emit(x,y,.25);this.createFireHazard(x,y,.5,3,.3);}
-        if(hit)g.createExplosion(w.x+dx*reach,w.y+dy*reach,.4);
+      else if(f.tick<=0){f.tick=.015;const w=f.owner,a=g.angle;let dx=Math.cos(a),dy=Math.sin(a);const length=Math.hypot(dx,dy);dx/=length;dy/=length;
+        const speed=6+Math.random()*.5,spread=(Math.random()-.5)*1.1,muzzleX=w.x+dx*1.35,muzzleY=w.y+.5,p=this.spawn('flameShot',muzzleX,muzzleY,dx*speed,dy*speed+spread,2.2);if(p){p.damageOverride=5;p.radiusOverride=.45;p.ignoreOwner=w;g.particles.emit(p.x,p.y,.12);}
       }
     }
     if(this.kamikaze){
@@ -258,10 +302,10 @@ export class Weapons {
     if(this.burst){const b=this.burst;b.tick-=dt;if(!b.owner.alive)this.burst=null;else if(b.tick<=0){this.fireGun(b.type);b.left--;b.tick=.1;if(!b.left)this.burst=null;}}
     for(let i=this.hazards.length-1;i>=0;i--){
       const hazard=this.hazards[i];hazard.remaining-=dt;hazard.tick-=dt;hazard.age=(hazard.age||0)+dt;
-      if(hazard.visual){const fade=THREE.MathUtils.clamp(hazard.remaining/hazard.duration,0,1);hazard.visual.root.scale.setScalar(.92+.1*Math.sin(hazard.age*18));for(const child of hazard.visual.root.children)if(child.material){if(child.material.uniforms?.uTime)child.material.uniforms.uTime.value=hazard.age;if(child.material.uniforms?.opacity)child.material.uniforms.opacity.value=fade*child.material.userData.baseOpacity;else child.material.opacity=fade*child.material.userData.baseOpacity;}}
-      if(hazard.tick<=0){hazard.tick=1;for(const worm of g.worms)if(worm.alive&&!worm.frozen&&Math.hypot(worm.x-hazard.x,worm.y-hazard.y)<hazard.radius){if(hazard.kind==='poison')worm.poison=Math.max(worm.poison||0,hazard.damage);else g.damage(worm,hazard.damage,false,false);}}
-      if(hazard.remaining<=0){hazard.visual?.dispose();this.hazards.splice(i,1);}
+      if(hazard.remaining>0&&hazard.tick<=0){hazard.tick=hazard.tickInterval||1;for(const worm of g.worms)if(worm.alive&&!worm.frozen){const inFire=hazard.kind==='fire'?hazard.particleSlots.some(p=>p.active&&p.grounded&&Math.hypot(worm.x-p.x,worm.y-p.y)<.9):Math.hypot(worm.x-hazard.x,worm.y-hazard.y)<hazard.radius;if(!inFire)continue;if(hazard.kind==='poison')worm.poison=Math.max(worm.poison||0,hazard.damage);else{g.damage(worm,Math.max(1,hazard.damage*.5),false,false);if(worm.alive){g.audio?.play('landing');const dx=worm.x-hazard.x;worm.body.applyImpulse({x:Math.sign(dx)*.28,y:.36},true);worm.slideTime=Math.max(worm.slideTime,.35);}}}}
+      if(hazard.remaining<=0&&!hazard.particleSlots?.some(p=>p.active)){this.hazards.splice(i,1);}
     }
+    this.updateFireParticles(dt);
     if(this.drilling>0){
       this.drilling=Math.max(0,this.drilling-dt);this.drillTick-=dt;
       if(!g.active.alive)this.drilling=0;
@@ -271,7 +315,24 @@ export class Weapons {
     for(let i=0;i<this.pool.length;i++){
       const p=this.pool[i];if(!p.active)continue;
       if(p.type==='madCow'&&!p.body.isEnabled()){p.delay-=dt;if(p.delay<=0){if(p.owner.alive)p.body.setTranslation({x:p.owner.x+p.dir,y:p.owner.y+.2},true);p.body.setEnabled(true);p.mesh.visible=true;}else continue;}
-      const pos=p.body.translation();p.x=pos.x;p.y=pos.y;p.age+=dt;p.remaining-=dt;
+      if(p.type==='flameShot'){
+        const baseSpeed=Math.hypot(p.flameVx,p.flameInitialVy)||1,nx=-p.flameInitialVy/baseSpeed,ny=p.flameVx/baseSpeed;
+        const wobble=Math.sin(p.age*p.flameWobbleFreq+p.flameWobblePhase)*p.flameWobbleAmp+Math.sin(p.age*p.flameWobbleFreq*1.73+p.flameWobblePhase2)*p.flameWobbleAmp*.35;
+        p.body.setLinvel({x:p.flameVx+nx*wobble,y:p.flameInitialVy-p.flameDrop*p.age+ny*wobble},true);
+      }
+      const previousX=p.x,previousY=p.y,pos=p.body.translation();p.x=pos.x;p.y=pos.y;p.age+=dt;p.remaining-=dt;
+      if(p.type==='flameShot'){
+        const moveX=p.x-previousX,moveY=p.y-previousY,moveDistance=Math.hypot(moveX,moveY);
+        if(moveDistance>.001){
+          this.ray.origin.x=previousX;this.ray.origin.y=previousY;this.ray.dir.x=moveX/moveDistance;this.ray.dir.y=moveY/moveDistance;
+          const obstacle=g.world.castRay(this.ray,moveDistance,true,undefined,undefined,p.collider,p.body,c=>!this.byCollider.has(c.handle)&&c.handle!==p.owner?.collider?.handle);
+          if(obstacle){
+            const impactDistance=Math.max(0,obstacle.timeOfImpact-.05),impactX=previousX+this.ray.dir.x*impactDistance,impactY=previousY+this.ray.dir.y*impactDistance;
+            p.body.setTranslation({x:impactX,y:impactY},true);p.x=impactX;p.y=impactY;p.hit=true;
+          }
+        }
+      }
+      if(p.type==='flameShot'&&Math.hypot(p.x-p.flameStartX,p.y-p.flameStartY)>=p.flameDistance)p.remaining=0;
       if((p.type==='homing'||p.type==='pigeon'||p.type==='magicBullet')&&p.age>.35){
         const v=p.body.linvel(),a=Math.atan2(p.targetY-p.y,p.targetX-p.x),current=Math.atan2(v.y,v.x);
         const rate=p.type==='homing'?2.8:p.type==='pigeon'?4:7;
@@ -331,21 +392,21 @@ export class Weapons {
       dynamite:[5,75],mine:[2.8,50],sheep:[4.5,75],superSheep:[4.5,75],sheepLauncher:[4.5,75],
       moleBomb:[2.8,55],bomb:[2.6,30],napalm:[2.2,25],mailstrike:[2.8,45],carpet:[3.5,55],armageddon:[4,70],
       petrol:[2.4,35],mingVase:[3.2,70],mbBomb:[4.5,100],oldWoman:[4,75],donkey:[7,100],fragment:[1.1,18],
-      frenchSheep:[4.5,75],madCow:[4.5,75],salvation:[1.8,20],skunk:[2.2,0]
+      frenchSheep:[4.5,75],flameShot:[.45,5],madCow:[4.5,75],salvation:[1.8,20],skunk:[2.2,0]
     };
-    const [radius,damage]=specs[type]||[3.5,55];if(type!=='skunk')this.explode(x,y,radiusOverride??radius,damageOverride??damage);
+    const [radius,damage]=specs[type]||[3.5,55];if(type!=='skunk')this.explode(x,y,radiusOverride??radius,damageOverride??damage,p.ignoreOwner||null);
     if(['cluster','banana','superBanana','mingVase','salvation'].includes(type)){
       const count=5;
       for(let i=0;i<count;i++){const a=.2+i*(Math.PI-.4)/(count-1),part=this.spawn('fragment',x+Math.cos(a)*.5,y+.5,Math.cos(a)*10,Math.sin(a)*10,type==='superBanana'?20:2);
         if(part){this.g.weaponArt.projectile(part,type==='superBanana'?'banana':type,.12);part.owner=owner;part.damageOverride=type==='cluster'?30:type==='mingVase'?25:75;part.radiusOverride=type==='cluster'||type==='mingVase'?1.3:3.2;part.remoteFragment=type==='superBanana';}}
     }
     if(type==='mortar')for(let i=0;i<5;i++){const a=Math.PI/2+(i-2)*.18,part=this.spawn('fragment',x,y,Math.cos(a)*8,Math.sin(a)*10,1.2);if(part){part.owner=owner;part.damageOverride=30;}}
-    if(type==='petrol'||type==='napalm'||type==='frenchSheep')this.createFireHazard(x,y,type==='napalm'?3.5:2.8,type==='napalm'?12:15,3);
+    if(type==='petrol'||type==='napalm'||type==='frenchSheep'||type==='flameShot')this.createFireHazard(x,y,type==='napalm'?3.5:type==='flameShot'?.7:2.8,type==='napalm'?12:type==='flameShot'?6:15,6);
     if(type==='skunk')this.hazards.push({kind:'poison',x,y,radius:3.5,damage:5,remaining:8,tick:.2});
   }
-  explode(x,y,r,damage){
+  explode(x,y,r,damage,ignoreOwner=null){
     const g=this.g,colors=g.createExplosion(x,y,r);g.particles.emit(x,y,r,colors);
-    for(const w of g.worms)if(w.alive){const pos=w.body.translation(),dx=pos.x-x,dy=pos.y-y,d=Math.hypot(dx,dy),reach=r*1.8;if(d>reach)continue;const f=1-d/reach;g.damage(w,Math.ceil(damage*f));if(w.alive&&!w.frozen){const impulse=13.5*Math.pow(f,.75),distance=Math.max(d,.2);w.body.applyImpulse({x:dx/distance*impulse,y:(dy/distance+.72)*impulse},true);w.slideTime=Math.max(w.slideTime,1.2);}}
+    for(const w of g.worms)if(w.alive&&w!==ignoreOwner){const pos=w.body.translation(),dx=pos.x-x,dy=pos.y-y,d=Math.hypot(dx,dy),reach=r*1.8;if(d>reach)continue;const f=1-d/reach;g.damage(w,Math.ceil(damage*f));if(w.alive&&!w.frozen){const impulse=13.5*Math.pow(f,.75),distance=Math.max(d,.2);w.body.applyImpulse({x:dx/distance*impulse,y:(dy/distance+.72)*impulse},true);w.slideTime=Math.max(w.slideTime,1.2);}}
     for(const p of this.pool)if(p.active&&p.type==='mine'&&Math.hypot(p.x-x,p.y-y)<r*1.5){p.triggered=true;p.remaining=Math.min(p.remaining,.2);}
   }
   fireGun(type){
@@ -372,5 +433,5 @@ export class Weapons {
       g.particles.emit(x,y,.35);
     }
   }
-  dispose(){for(const hazard of this.hazards)hazard.visual?.dispose();this.hazards.length=0;this.tether.removeFromParent();this.tether.geometry.dispose();this.tether.material.dispose();for(const p of this.pool){p.mesh.removeFromParent();p.mesh.material.dispose();}this.geometry.dispose();this.marker.removeFromParent();this.marker.geometry.dispose();this.marker.material.dispose();}
+  dispose(){this.hazards.length=0;this.fireParticles.mesh.removeFromParent();this.fireParticles.geometry.dispose();this.fireParticles.material.dispose();this.tether.removeFromParent();this.tether.geometry.dispose();this.tether.material.dispose();for(const p of this.pool){p.mesh.removeFromParent();p.mesh.material.dispose();}this.geometry.dispose();this.marker.removeFromParent();this.marker.geometry.dispose();this.marker.material.dispose();}
 }
