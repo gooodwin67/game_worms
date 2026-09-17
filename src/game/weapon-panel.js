@@ -85,7 +85,7 @@ export class WeaponPanel {
     document.querySelector('#game-root').append(this.root);
   }
   get open() { return !this.root.hidden; }
-  canSelect() { const g = this.game; return g.gameMode !== 'training' && g.humanInput() && g.turn.state === 'WAITING_INPUT' && !g.turn.lockedWeapon; }
+  canSelect() { const g = this.game; return (g.gameMode !== 'training' || g.trainingFreePractice) && g.humanInput() && g.turn.state === 'WAITING_INPUT' && !g.turn.lockedWeapon; }
   flip() {
     if (this.open) { this.close(); return; }
     if (!this.canSelect()) return;
@@ -105,6 +105,7 @@ export class WeaponPanel {
     if (!this.canSelect()) return;
     if (!this.game.canUseWeapon(id)) return;
     this.game.turn.weapon = id;
+    this.game.activeMoved = true;
     this.game.weapons.resetTarget();
     this.close();
     this.refresh();

@@ -87,7 +87,7 @@ export class TurnMachine {
     g.wind = (Math.random() * 2 - 1) * WIND_MAX;
     for (const worm of g.worms) if (worm.team === this.team) { worm.frozen = false; worm.speedBoost = false; worm.invisible = false; worm.laserSight = false; }
     for (const worm of g.worms) if (worm.alive && !worm.frozen && (worm.poison || worm.radiation)) g.damage(worm, Math.min(worm.hp - 1, 2), false, false);
-    this.remaining = 45; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' && g.trainingWeapon ? g.trainingWeapon : 'bazooka'; this.weaponConsumed = false; this.state = TURN.WAITING_INPUT;
+    this.remaining = g.trainingFreePractice ? Infinity : 45; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' && g.trainingWeapon !== 'free' ? g.trainingWeapon : 'bazooka'; this.weaponConsumed = false; this.state = TURN.WAITING_INPUT;
     g.angle = g.active.facing < 0 ? Math.PI * .75 : Math.PI * .25;
     g.keys.clear(); g.weapons.resetTarget(); g.bot.reset();
   }
@@ -96,18 +96,24 @@ export class TurnMachine {
   release() {
     if (this.state !== TURN.CHARGING_SHOT) return;
     this.game.audio?.stopLoop('energyCharge');
-    if (!this.weaponConsumed && !this.game.canUseWeapon(this.weapon)) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
+    const usedWeapon = this.weapon;
+    if (!this.weaponConsumed && !this.game.canUseWeapon(usedWeapon)) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
     this.game.cameraFocus = null;
     this.state = TURN.ACTION_RESOLVING;
-    if (this.game.weapons.fire(this.weapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
+    if (this.game.weapons.fire(usedWeapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
     this.game.audio?.play('energyShot');
     if (!this.weaponConsumed) {
-      this.game.consumeWeapon(this.weapon);
+      this.game.consumeWeapon(usedWeapon);
       this.weaponConsumed = true;
     }
     if (this.state === TURN.ACTION_RESOLVING || this.state === TURN.SETTLING) {
-      if (!this.game.weapons.drilling && !['skipGo', 'surrender', 'freeze', 'selectWorm', 'scales', 'teleport', 'girder', 'girderPack'].includes(this.weapon)) this.game.weapons.retreat = Math.max(this.game.weapons.retreat, 3);
-      if (this.weapon !== 'freeze') for (const worm of this.game.teams[this.team].worms) worm.invisible = false;
+      if (!this.game.weapons.drilling && !['skipGo', 'surrender', 'freeze', 'selectWorm', 'scales', 'teleport', 'girder', 'girderPack'].includes(usedWeapon)) this.game.weapons.retreat = Math.max(this.game.weapons.retreat, 3);
+      if (usedWeapon !== 'freeze' && usedWeapon !== 'invisibility') for (const worm of this.game.teams[this.team].worms) worm.invisible = false;
+    }
+    if (this.game.returnToBazooka) {
+      this.weapon = 'bazooka';
+      this.game.returnToBazooka = false;
+      this.game.weapons.resetTarget();
     }
   }
   settle() { this.game.audio?.stopLoop('turnCountdown'); this.countdownStarted = false; this.still = 0; this.state = TURN.SETTLING; }
@@ -115,14 +121,16 @@ export class TurnMachine {
     if (this.game.winner) return;
     if (this.state === TURN.NEXT_TURN) { this.next(); return; }
     if (this.state === TURN.WAITING_INPUT || this.state === TURN.CHARGING_SHOT) {
-      this.remaining = Math.max(0, this.remaining - dt);
-      if (this.remaining <= 10 && this.remaining > 0 && !this.countdownStarted) {
-        this.game.audio?.startLoop('turnCountdown');
-        this.countdownStarted = true;
+      if (!this.game.trainingFreePractice) {
+        this.remaining = Math.max(0, this.remaining - dt);
+        if (this.remaining <= 10 && this.remaining > 0 && !this.countdownStarted) {
+          this.game.audio?.startLoop('turnCountdown');
+          this.countdownStarted = true;
+        }
       }
       if (!this.game.active.alive) { this.game.weapons.endUtility(); this.shots = 0; this.settle(); return; }
       if (this.state === TURN.CHARGING_SHOT) this.charge = Math.min(1, this.charge + dt / 1.5);
-      if (this.remaining === 0) { if (this.state === TURN.CHARGING_SHOT) this.release(); this.game.weapons.endUtility(); this.shots = 0; this.settle(); }
+      if (!this.game.trainingFreePractice && this.remaining === 0) { if (this.state === TURN.CHARGING_SHOT) this.release(); this.game.weapons.endUtility(); this.shots = 0; this.settle(); }
     }
     if (this.state === TURN.SETTLING) {
       if (this.game.weapons.busy()) { this.still = 0; return; }

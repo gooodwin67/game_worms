@@ -9,7 +9,13 @@ import { WeaponArt, disposeWeaponMesh } from './weapon-art.js';
 import { WEAPON_ICON_REGIONS } from './weapon-icon-regions.js';
 
 const STANDING_SLOPE_NORMAL_Y = Math.cos(80 * Math.PI / 180);
+const NO_AIM_WEAPONS = new Set([
+  'skipGo', 'surrender', 'selectWorm', 'freeze', 'scales', 'lowGravity', 'fastWalk', 'laserSight', 'invisibility',
+  'firePunch', 'battleAxe', 'baseballBat', 'prod', 'kamikaze', 'suicideBomber', 'earthquake',
+  'drill', 'pneumaticDrill', 'blowTorch', 'mine', 'dynamite', 'bungee', 'parachute', 'jetPack', 'uppercut'
+]);
 const TRAINING_SCENARIOS = Object.freeze({
+  free: { map: 'free', mode: 'free', indestructible: false },
   jetPack: { map: 'open', mode: 'free', indestructible: true },
   bazooka: { map: 'target', mode: 'sequential', indestructible: true, order: [0, 1, 2] },
   homing: { map: 'target', mode: 'sequential', indestructible: true, order: [2, 1, 0] },
@@ -99,7 +105,7 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false;
+    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0;
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
     this.inMenu = true; this.installUI(); this.bindInput();
   }
@@ -139,7 +145,7 @@ export class Game {
     root.add(bodyPivot, headGroup, wingLPivot, wingRPivot, tailPivot, weaponPivot);
     return {
       root, bodyPivot, headGroup, wingLPivot, wingRPivot, tailPivot, weaponPivot,
-      currentWeapon: null, weaponMesh: null,
+      currentWeapon: null, weaponMesh: null, currentEquipment: null, equipmentMesh: null,
       dispose: () => {
         root.removeFromParent();
         root.traverse(child => child.geometry?.dispose());
@@ -345,6 +351,14 @@ export class Game {
     });
     this.targetTrainingMapImage = targetTrainingMap.complete && targetTrainingMap.naturalWidth !== 0 ? targetTrainingMap : null;
 
+    const freeTrainingMap = new Image();
+    freeTrainingMap.src = `${import.meta.env.BASE_URL}training/free.jpg`;
+    await new Promise(resolve => {
+      freeTrainingMap.onload = resolve;
+      freeTrainingMap.onerror = resolve;
+    });
+    this.freeTrainingMapImage = freeTrainingMap.complete && freeTrainingMap.naturalWidth !== 0 ? freeTrainingMap : null;
+
     this.configure();
   }
 
@@ -372,12 +386,12 @@ export class Game {
     this.events = new RAPIER.EventQueue(true);
     // У каждой тренировки свой полигон: цели нужны только там, где они являются частью упражнения.
     this.trainingScenario = this.gameMode === 'training' ? TRAINING_SCENARIOS[this.trainingWeapon] : null;
-    this.trainingFreePractice = this.trainingScenario?.mode === 'free';
+    this.trainingFreePractice = this.trainingWeapon === 'free';
     this.targetTrainingActive = this.trainingScenario?.mode === 'sequential' || this.trainingScenario?.mode === 'close';
     this.targetTrainingStage = 0;
     this.trainingIndestructible = Boolean(this.trainingScenario?.indestructible);
     const useFile = this.gameMode !== 'training' && document.querySelector('input[name="mapSource"]:checked')?.value === 'custom';
-    const mapImage = this.trainingScenario?.map === 'target' ? this.targetTrainingMapImage : (useFile && this.customMapImage) ? this.customMapImage : null;
+    const mapImage = this.trainingScenario?.map === 'target' ? this.targetTrainingMapImage : this.trainingFreePractice ? this.freeTrainingMapImage : (useFile && this.customMapImage) ? this.customMapImage : null;
 
     this.terrain = new Terrain(this.scene, this.world, mapImage);
     const trainingPlatforms = this.trainingScenario?.map === 'target' ? this.terrain.findPlatformTops() : [];
@@ -426,24 +440,29 @@ export class Game {
     this.active = null;
     this.waterLevel = 0;
     this.time = 0;
+    this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0;
     this.angle = Math.PI / 4;
     this.keys.clear();
 
-    const count = this.trainingFreePractice ? 1 : this.gameMode === 'training' ? 2 : Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
-      perTeam = this.trainingScenario ? 1 : this.gameMode === 'training' ? 3 : Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
+    const count = this.trainingFreePractice ? 2 : this.gameMode === 'training' ? 2 : Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
+      perTeam = this.trainingFreePractice ? 3 : this.trainingScenario ? 1 : this.gameMode === 'training' ? 3 : Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
     const rows = this.teamRows.children;
     const spawnCount = count * perTeam;
     const spawnSegment = (MAP.width - 10) / spawnCount;
     let spawnLocations;
     if (this.terrain.hasCustomImage) {
       const candidates = this.terrain.findSpawnPoints();
+      const availableCandidates = this.trainingFreePractice
+        ? candidates.filter(point => point.x >= MAP.width * .3 && point.x <= MAP.width * .7)
+        : candidates;
+      const pool = availableCandidates.length >= spawnCount ? availableCandidates : candidates;
       const selected = [];
       // Берём следующую точку максимально далеко от уже выбранных,
       // чтобы черви не скучивались на одной широкой платформе.
-      if (candidates.length) selected.push(candidates[Math.floor(Math.random() * candidates.length)]);
-      while (selected.length < Math.min(spawnCount, candidates.length)) {
+      if (pool.length) selected.push(pool[Math.floor(Math.random() * pool.length)]);
+      while (selected.length < Math.min(spawnCount, pool.length)) {
         let best = [], bestDistance = -Infinity;
-        for (const candidate of candidates) {
+        for (const candidate of pool) {
           if (selected.includes(candidate)) continue;
           const distance = selected.length ? Math.min(...selected.map(point => Math.abs(point.x - candidate.x))) : Infinity;
           if (distance > bestDistance + .2) { bestDistance = distance; best = [candidate]; }
@@ -468,16 +487,16 @@ export class Game {
 
     for (let t = 0; t < count; t++) {
       const configuredName = rows[t].querySelector('input').value.trim() || `Команда ${t + 1}`,
-        name = this.gameMode === 'training' ? (t === 0 ? 'Учебный отряд' : 'Мишени') : configuredName,
+        name = this.trainingFreePractice ? `Команда ${t + 1}` : this.gameMode === 'training' ? (t === 0 ? 'Учебный отряд' : 'Мишени') : configuredName,
         selectedBot = rows[t].querySelector('select').value,
-        bot = this.gameMode === 'training' && t > 0 ? 'target' : selectedBot;
+        bot = this.gameMode === 'training' && !this.trainingFreePractice && t > 0 ? 'target' : selectedBot;
       const inventory = Object.fromEntries(Object.keys(ARSENAL).map(id => [id, UNLIMITED_WEAPONS.has(id) ? Infinity : 1]));
       const team = { name, bot, passive: bot === 'target', color: COLORS[t], worms: [], inventory };
       this.teams.push(team);
 
       for (let i = 0; i < perTeam; i++) {
         const isTrainingTarget = this.targetTrainingActive && t === 1;
-        const trainingPosition = this.trainingScenario
+        const trainingPosition = this.trainingScenario && !this.trainingFreePractice
           ? (isTrainingTarget ? this.targetTrainingTargets[0] : this.targetTrainingPlayerPosition)
           : null;
         const rawSpawnLocation = spawnLocations[spawnIndex++];
@@ -492,7 +511,7 @@ export class Game {
         const body = this.world.createRigidBody(bodyDescription);
         const colliderDescription = isTrainingTarget
           ? RAPIER.ColliderDesc.ball(.66).setFriction(.2).setRestitution(.15).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
-          : RAPIER.ColliderDesc.capsule(.23, .38).setMass(1).setFriction(.38).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(0).setCollisionGroups(0x00020001);
+          : RAPIER.ColliderDesc.capsule(.23, .38).setMass(1).setFriction(.38).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(0).setCollisionGroups(0x00020003);
         const collider = this.world.createCollider(colliderDescription, body);
 
         // Игрок остаётся уткой, учебная мишень собирается из простых геометрических примитивов.
@@ -514,7 +533,7 @@ export class Game {
         turnMarker.hidden = true;
         const fuelIndicator = document.createElement('span');
         fuelIndicator.className = 'jetpack-fuel-indicator';
-        fuelIndicator.innerHTML = '<small>ТОПЛИВО</small><strong>100</strong>';
+        fuelIndicator.innerHTML = '<strong>100</strong>';
         fuelIndicator.hidden = true;
         const fuelValue = fuelIndicator.querySelector('strong');
         const text = document.createElement('span');
@@ -539,13 +558,13 @@ export class Game {
         const worm = {
           body, collider, mesh, duck, label, health, fuelIndicator, fuelValue, team: t,
           name: wormName,
-          hp: isTrainingTarget ? 40 : 100, displayedHp: isTrainingTarget ? 40 : 100, pendingHp: isTrainingTarget ? 40 : 100, healthRevealTime: 0, healthText, damagePopupQueue: [], turnMarker, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, deathTime: 0, deathSide: 1, deathStartRotation: 0, deathSpinVelocity: 0, deadHelmet: null, poison: 0, radiation: 0,
+          hp: isTrainingTarget ? 40 : 100, displayedHp: isTrainingTarget ? 40 : 100, pendingHp: isTrainingTarget ? 40 : 100, healthRevealTime: 0, healthText, damagePopupQueue: [], fireDamageTotal: 0, turnMarker, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, deathTime: 0, deathSide: 1, deathStartRotation: 0, deathSpinVelocity: 0, deadHelmet: null, poison: 0, radiation: 0,
           trainingTarget: isTrainingTarget,
           x, y, previousX: x, previousY: y, vx: 0, vy: 0,
           grounded: false, airborneTime: 0, airbornePeakY: y, hardFalling: false, knockedDown: false, impactVelocityX: 0, impactSpinDirection: 0, tumbleRotation: 0, recoverySide: -1, recoveryTime: 0, groundNormalX: 0, groundNormalY: 1,
           animTime: Math.random() * 5,
           victoryPhase: Math.random() * Math.PI * 2,
-          jumpTapTime: -Infinity, backflipEligibleUntil: -Infinity, backflipRequested: false, backflipStart: -Infinity, backflipping: false, jumpFacing: 1
+          jumpTapTime: -Infinity, backflipEligibleUntil: -Infinity, backflipRequested: false, backflipStart: -Infinity, backflipping: false, jumpFacing: 1, autoHopCooldown: 0
         };
 
         this.worms.push(worm);
@@ -698,11 +717,20 @@ export class Game {
       this.aimReticle.position.set(0.65 + coneLength + 0.35, 0, 0.12);
       this.aim.add(this.aimReticle);
 
+      this.laserSightLine = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(.45, 0, .14), new THREE.Vector3(65, 0, .14)]),
+        new THREE.LineBasicMaterial({ color: 0xff3b45, transparent: true, opacity: .8, depthWrite: false })
+      );
+      this.laserSightLine.frustumCulled = false;
+      this.laserSightLine.visible = false;
+      this.aim.add(this.laserSightLine);
+
       this.scene.add(this.aim);
     }
   }
 
   weaponCount(type, teamIndex = this.turn?.team) {
+    if (this.trainingFreePractice) return Infinity;
     if (UNLIMITED_WEAPONS.has(type)) return Infinity;
     return this.teams[teamIndex]?.inventory?.[type] ?? 0;
   }
@@ -858,7 +886,7 @@ export class Game {
   damage(w, amount, force = false, impact = true) {
     if (!w.alive || (w.frozen && !force)) return;
     const previousHp = w.hp;
-    w.hp = Math.max(0, w.hp - amount);
+    if (!this.trainingFreePractice) w.hp = Math.max(0, w.hp - amount);
     w.pendingHp = w.hp;
     w.health.title = `${w.hp} HP`;
     if (amount > 0 && previousHp > 0) {
@@ -870,7 +898,7 @@ export class Game {
       w.impactSpinDirection = 0;
       w.tumbleRotation = w.mesh.rotation.z;
     }
-    if (w.hp === 0) {
+    if (w.hp === 0 && !this.trainingFreePractice) {
       if (w.trainingTarget && this.advanceTargetTraining(w)) return;
       w.alive = false;
       w.state = 'dead';
@@ -896,7 +924,8 @@ export class Game {
         const helmetCollider = this.world.createCollider(RAPIER.ColliderDesc.ball(.45)
           .setMass(.35)
           .setFriction(.4)
-          .setRestitution(.28), helmetBody);
+          .setRestitution(.28)
+          .setCollisionGroups(0x00080001), helmetBody);
         helmetBody.setRotation(w.mesh.rotation.z, true);
         helmetBody.applyImpulse({ x: w.vx * .18 + w.deathSide * .8, y: Math.max(1.8, w.vy * .15 + 2.4) }, true);
         helmetBody.applyTorqueImpulse(w.deathSide * 1.6, true);
@@ -913,6 +942,7 @@ export class Game {
 
   update(dt) {
     this.time += dt;
+    this.earthquakeShake = Math.max(0, this.earthquakeShake - dt);
     this.damageDisplayTime = Math.max(0, this.damageDisplayTime - dt);
     this.turnIntroTime = Math.max(0, this.turnIntroTime - dt);
     this.particles.update(this.time);
@@ -924,6 +954,7 @@ export class Game {
 
       const w = this.active,
         direction = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
+      w.autoHopCooldown = Math.max(0, (w.autoHopCooldown || 0) - dt);
       const jump = this.keys.delete('KeyW');
       const backflip = w.backflipRequested && this.time <= w.backflipEligibleUntil && !this.weapons.movementMode;
       w.backflipRequested = false;
@@ -958,6 +989,28 @@ export class Game {
           const walkSpeed = w.speedBoost ? 6.8 : 3.4;
           this.motion.x = w.vx + (direction * walkSpeed * w.groundNormalY - w.vx) * blend;
           this.motion.y = w.vy + (-direction * walkSpeed * w.groundNormalX - w.vy) * blend;
+          // При ходьбе другой боец является неподвижным препятствием, а не
+          // динамическим телом, которое можно вытолкнуть своим корпусом.
+          for (const other of this.worms) {
+            if (other === w || !other.alive) continue;
+            const closeVertically = Math.abs(other.y - w.y) < 1.05;
+            const distanceX = other.x - w.x;
+            if (closeVertically && direction * distanceX > 0 && Math.abs(distanceX) < .8) {
+              this.motion.x = 0;
+              break;
+            }
+          }
+          if (this.motion.x !== 0 && w.autoHopCooldown <= 0 && this.terrain) {
+            const nextFloor = this.terrain.landingHeight(w.x + direction * .46, .38, .61);
+            const stepUp = nextFloor !== null && nextFloor - w.y > .22 && nextFloor - w.y < 1.1;
+            if (stepUp) {
+              // Небольшой автоматический подъём через кочку, без звука прыжка.
+              w.autoHopCooldown = .35;
+              this.motion.x = direction * Math.max(3.4, Math.abs(this.motion.x));
+              this.motion.y = 2.25;
+              w.grounded = false;
+            }
+          }
           w.body.setLinvel(this.motion, true);
         }
         if (jump) {
@@ -981,6 +1034,24 @@ export class Game {
       if (!w.alive) continue;
       w.slideTime = Math.max(0, w.slideTime - dt);
       const walkable = w.grounded && w.groundNormalY >= STANDING_SLOPE_NORMAL_Y;
+      const walkingThroughWorms = w === this.active && w.grounded && w.slideTime === 0 && this.humanInput() &&
+        (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.movementMode || this.weapons.flame) &&
+        (this.keys.has('KeyA') || this.keys.has('KeyD') || this.keys.has('ArrowLeft') || this.keys.has('ArrowRight'));
+      // Во время обычной ходьбы стоящие другие бойцы временно фиксируются:
+      // активный игрок упирается в них, но физический решатель не может
+      // вытолкнуть их. Их коллайдер при этом продолжает сталкиваться с землёй.
+      w.collider.setCollisionGroups(0x00020003);
+      const shouldFreeze = walkingThroughWorms && w !== this.active && w.grounded && !w.knockedDown;
+      if (shouldFreeze && !w.walkingFrozen) {
+        w.walkingFrozen = true;
+        w.walkingFrozenVelocity = { x: w.vx, y: w.vy };
+        w.body.setBodyType(RAPIER.RigidBodyType.Fixed, true);
+      } else if (!shouldFreeze && w.walkingFrozen) {
+        w.walkingFrozen = false;
+        w.body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+        w.body.setLinvel(w.walkingFrozenVelocity || { x: 0, y: 0 }, true);
+        w.body.wakeUp();
+      }
       w.collider.setFriction(w.slideTime > 0 || !walkable ? .12 : .38);
       if (!walkable || w.body.isSleeping()) continue;
 
@@ -993,7 +1064,6 @@ export class Game {
       const moving = w === this.active && this.humanInput() &&
         (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.movementMode || this.weapons.flame) &&
         (this.keys.has('KeyA') || this.keys.has('KeyD') || this.keys.has('ArrowLeft') || this.keys.has('ArrowRight'));
-
       if (!moving) {
         const braking = w.slideTime > 0 ? 1.2 : 7;
         tangentDelta -= tangentSpeed * (1 - Math.exp(-braking * dt));
@@ -1140,6 +1210,10 @@ export class Game {
   }
 
   releaseDamagePopups(w) {
+    if (w.fireDamageTotal > 0) {
+      w.damagePopupQueue.push(w.fireDamageTotal);
+      w.fireDamageTotal = 0;
+    }
     if (!w.label || w.label.hidden || !w.damagePopupQueue?.length) return;
     this.damageDisplayTime = Math.max(this.damageDisplayTime, 1.4);
     for (const percent of w.damagePopupQueue.splice(0)) {
@@ -1202,6 +1276,10 @@ export class Game {
   }
 
   render(dt, alpha) {
+    this.camera.position.x -= this.earthquakeShakeX;
+    this.camera.position.y -= this.earthquakeShakeY;
+    this.earthquakeShakeX = 0;
+    this.earthquakeShakeY = 0;
     const target = this.cameraFocus || this.weapons.projectile || this.active;
     const smoothing = 1 - Math.exp(-5 * dt);
     this.camera.zoom += (this.zoom - this.camera.zoom) * smoothing;
@@ -1216,16 +1294,25 @@ export class Game {
       this.camera.position.y += (y - this.camera.position.y) * smoothing;
       if (this.cameraFocus && !this.cameraFocus.supplyCrate && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
     }
+    if (this.earthquakeShake > 0) {
+      const strength = Math.min(.88, this.earthquakeShake * 1.5);
+      this.earthquakeShakeX = (Math.random() - .5) * strength;
+      this.earthquakeShakeY = (Math.random() - .5) * strength;
+      this.camera.position.x += this.earthquakeShakeX;
+      this.camera.position.y += this.earthquakeShakeY;
+    }
     this.camera.updateMatrixWorld();
 
     // Процедурные анимации для каждой утки
     // Процедурные анимации и оружие для каждой утки
     for (const w of this.worms) if (w.alive) {
       const isWinningWorm = this.winner && this.winningTeam === w.team;
-      w.mesh.visible = !w.invisible || w === this.active;
-      w.label.hidden = w.invisible && w !== this.active;
-      const showJetpackFuel = w === this.active && this.weapons.movementMode?.mode === 'jetPack' && !this.winner;
+      w.mesh.visible = !w.invisible;
+      w.label.hidden = w.invisible;
+      const jetPackFlight = this.weapons.movementMode?.mode === 'jetPack' ? this.weapons.movementMode : null;
+      const showJetpackFuel = jetPackFlight?.owner === w && !this.winner;
       w.fuelIndicator.hidden = !showJetpackFuel;
+      w.label.classList.toggle('jetpack-active', showJetpackFuel);
       if (showJetpackFuel) w.fuelValue.textContent = String(Math.ceil(this.weapons.jetPackFuel ?? 100));
       const showTurnMarker = w === this.active && !this.activeMoved && !this.winner;
       w.turnMarker.hidden = !showTurnMarker;
@@ -1273,6 +1360,20 @@ export class Game {
       } else {
         if (d.weaponPivot) d.weaponPivot.visible = false;
         if (d.weaponMesh) d.weaponMesh.visible = false;
+      }
+
+      const equipmentType = !this.winner && w === this.active && !isRecovering &&
+        (this.turn.weapon === 'jetPack' || this.weapons.movementMode?.mode === 'jetPack') ? 'jetPack' : null;
+      if (d.currentEquipment !== equipmentType) {
+        disposeWeaponMesh(d.equipmentMesh);
+        d.equipmentMesh = equipmentType ? this.weaponArt.createEquipment(equipmentType) : null;
+        if (d.equipmentMesh) w.mesh.add(d.equipmentMesh);
+        d.currentEquipment = equipmentType;
+      }
+      if (d.equipmentMesh) {
+        d.equipmentMesh.visible = Boolean(equipmentType);
+        d.equipmentMesh.position.set(-w.facing * .45, .04, -.12);
+        d.equipmentMesh.scale.set(1, 1, 1);
       }
 
       // Состояния анимации утки
@@ -1372,14 +1473,32 @@ export class Game {
       w.mesh.rotation.z += w.deathSpinVelocity * dt;
     }
 
-    const showAim = !!this.active?.alive && !this.winner &&
+    const showAim = !!this.active?.alive && !this.winner && !NO_AIM_WEAPONS.has(this.turn.weapon) &&
       (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT);
     this.aim.visible = showAim;
+    const pointTargeting = this.weapons.usesTarget(this.turn.weapon);
+    this.canvas.style.cursor = showAim && !pointTargeting && !this.weaponPanel.open ? 'none' : '';
+    const showLaserSight = showAim && !pointTargeting && this.active?.laserSight;
+    this.laserSightLine.visible = !!showLaserSight;
 
 
     if (showAim) {
       this.aim.position.copy(this.active.mesh.position);
       this.aim.rotation.z = this.angle;
+
+      if (showLaserSight) {
+        const ray = this.weapons.ray;
+        ray.origin.x = this.active.x;
+        ray.origin.y = this.active.y;
+        ray.dir.x = Math.cos(this.angle);
+        ray.dir.y = Math.sin(this.angle);
+        const hit = this.world.castRay(ray, 65, true, undefined, undefined, this.active.collider, this.active.body);
+        const length = hit ? Math.max(.5, hit.timeOfImpact) : 65;
+        this.laserSightLine.geometry.setFromPoints([
+          new THREE.Vector3(.45, 0, .14),
+          new THREE.Vector3(length, 0, .14)
+        ]);
+      }
 
       // Перекрестие прицела всегда сохраняет горизонтальное положение (не крутится вокруг своей оси)
       this.aimReticle.rotation.z = -this.angle;
@@ -1457,7 +1576,7 @@ export class Game {
       if (!this.humanInput() || this.weaponPanel.open || this.turnIntroTime > 0) return;
       const rect = this.canvas.getBoundingClientRect();
       this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
-      if (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || this.weapons.flame) {
+      if (!NO_AIM_WEAPONS.has(this.turn.weapon) && (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || this.weapons.flame)) {
         this.angle = Math.atan2(this.vector.y - this.active.y, this.vector.x - this.active.x);
         this.active.facing = Math.cos(this.angle) < 0 ? -1 : 1;
         this.activeMoved = true; // <-- Мышь сдвинулась для прицела — плашка исчезает
@@ -1505,6 +1624,7 @@ export class Game {
       </button>
     `;
     const trainingWeapons = [
+      ['free', 'Свободная карта, бесконечное оружие и бессмертие'],
       ['jetPack', 'Управление полётом и посадка'],
       ['bazooka', 'Траектория и сила выстрела'],
       ['homing', 'Наведение ракеты на цель'],
@@ -1529,18 +1649,23 @@ export class Game {
       button.type = 'button';
       button.className = 'training-tile';
       button.dataset.weapon = id;
-      button.setAttribute('aria-label', `${ARSENAL[id]}. ${description}`);
-      const index = arsenalIds.indexOf(id);
-      const [x, y, width, height] = WEAPON_ICON_REGIONS[index];
-      button.innerHTML = `
-        <svg class="training-weapon-icon" aria-hidden="true" viewBox="0 0 ${width} ${height}" focusable="false">
-          <svg width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" overflow="hidden">
-            <image href="${import.meta.env.BASE_URL}assets/weapon-atlas.png" width="749" height="2098"></image>
+      const title = id === 'free' ? 'Свободная тренировка' : ARSENAL[id];
+      button.setAttribute('aria-label', `${title}. ${description}`);
+      if (id === 'free') {
+        button.innerHTML = `<div class="training-weapon-icon training-free-icon" aria-hidden="true">∞</div><strong>${title}</strong><span>${description}</span>`;
+      } else {
+        const index = arsenalIds.indexOf(id);
+        const [x, y, width, height] = WEAPON_ICON_REGIONS[index];
+        button.innerHTML = `
+          <svg class="training-weapon-icon" aria-hidden="true" viewBox="0 0 ${width} ${height}" focusable="false">
+            <svg width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" overflow="hidden">
+              <image href="${import.meta.env.BASE_URL}assets/weapon-atlas.png" width="749" height="2098"></image>
+            </svg>
           </svg>
-        </svg>
-        <strong>${ARSENAL[id]}</strong>
-        <span>${description}</span>
-      `;
+          <strong>${title}</strong>
+          <span>${description}</span>
+        `;
+      }
       trainingGrid.append(button);
     }
     const setup = document.createElement('div');
@@ -1709,7 +1834,7 @@ export class Game {
     const botThinking = this.teams[t.team]?.bot && t.state === TURN.WAITING_INPUT && this.bot.elapsed < 2;
     const turnState = botThinking ? 'ДУМАЕТ…' : t.state;
     const trainingProgress = this.targetTrainingActive ? `Мишень ${Math.min(this.targetTrainingStage + 1, 3)}/3 · ` : '';
-    const text = this.winner || `${trainingProgress}${this.teams[t.team].name} · ${Math.ceil(t.remaining)} с · ${turnState} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
+    const text = this.winner || `${trainingProgress}${this.teams[t.team].name} · ${this.trainingFreePractice ? '∞' : Math.ceil(t.remaining)} с · ${turnState} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
     const hints = { girder: 'Прицел — угол; ЛКМ — поставить в свободном месте', girderPack: 'ЛКМ — поставить балку; за ход можно поставить пять', mbBomb: 'ЛКМ — сбросить бомбу сверху', holy: 'Удерживайте пробел — сила броска; взрыв после 3 секунд и остановки', moleBomb: 'Пробел — выпустить, затем начать бурение, затем взорвать', skunk: 'Пробел — выпустить; ещё раз — выпустить газ', salvation: 'Пробел — выпустить; ещё раз — взорвать', superBanana: 'Пробел — бросить; затем разделить; затем взорвать осколки', homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель; пробел — выпустить голубя', magicBullet: 'ЛКМ — выбрать цель; пробел — выпустить волшебную пулю', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'Пробел — поднять воду и заразить незамороженных бойцов', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: '1–5 — размер стада; пробел — выпустить в выбранном направлении', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'Пробел — метеоритный дождь по всей карте', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'Прицел + пробел — зацепиться; A/D — качаться; W/S — длина; пробел — отпустить', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить, затем взлететь, затем взорвать; A/D или ←/→ — поворот', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Пробел — включить/снять; W/↑ — тяга вверх, A/D — в стороны; Enter — сбросить оружие', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
     const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте пробел / ЛКМ для силы выстрела' : 'Пробел / ЛКМ — применить оружие');
     if (this.weaponHint.textContent !== hint) this.weaponHint.textContent = hint;
@@ -1749,7 +1874,8 @@ export class Game {
 
       // Скрываем плашку активного игрока, если он уже сдвинулся или целится
       const turnAllowsLabelHide = this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT;
-      if (isActive && this.activeMoved && turnAllowsLabelHide) {
+      const showingJetpackFuel = this.weapons.movementMode?.mode === 'jetPack' && this.weapons.movementMode.owner === w;
+      if (isActive && this.activeMoved && turnAllowsLabelHide && !showingJetpackFuel) {
         w.label.style.display = 'none';
       } else {
         w.label.style.display = 'flex';

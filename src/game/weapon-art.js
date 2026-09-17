@@ -6,7 +6,7 @@ const ALIASES = { bomb: 'homing', madCow: 'madCows', fragment: 'cluster' };
 const WALKERS = new Set(['sheep', 'superSheep', 'sheepLauncher', 'moleBomb', 'madCow', 'oldWoman', 'salvation', 'skunk', 'donkey', 'mbBomb']);
 
 export class WeaponArt {
-  constructor(ids) { this.ids = ids; this.textures = new Map(); this.flameTexture = null; }
+  constructor(ids) { this.ids = ids; this.textures = new Map(); this.equipmentTextures = new Map(); this.flameTexture = null; }
   async load() {
     const image = new Image();
     image.src = `${import.meta.env.BASE_URL}assets/weapon-atlas.png`;
@@ -24,7 +24,9 @@ export class WeaponArt {
         if (seen[i]) return;
         seen[i] = 1;
         const p = i * 4;
-        if (data[p + 3] < 16 || Math.max(data[p], data[p + 1], data[p + 2]) < 24) queue.push(i);
+        const darkBackground = Math.max(data[p], data[p + 1], data[p + 2]) < 24;
+        const lightBackground = Math.min(data[p], data[p + 1], data[p + 2]) > 245;
+        if (data[p + 3] < 16 || darkBackground || lightBackground) queue.push(i);
       };
       for (let x = 0; x < width; x++) { add(x); add((height - 1) * width + x); }
       for (let y = 0; y < height; y++) { add(y * width); add(y * width + width - 1); }
@@ -40,9 +42,47 @@ export class WeaponArt {
       texture.colorSpace = THREE.SRGBColorSpace;
       this.textures.set(id, texture);
     });
+
+    // Дополнительные изображения экипировки берём из отдельного атласа.
+    const equipmentImage = new Image();
+    equipmentImage.src = `${import.meta.env.BASE_URL}assets/weapon-atlas2.png`;
+    await equipmentImage.decode();
+    const equipmentId = 'jetPack';
+    const equipmentIndex = this.ids.indexOf(equipmentId);
+    if (equipmentIndex >= 0) {
+      const [x, y, width, height] = WEAPON_ICON_REGIONS[equipmentIndex];
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(equipmentImage, x, y, width, height, 0, 0, width, height);
+      const pixels = ctx.getImageData(0, 0, width, height), data = pixels.data;
+      const seen = new Uint8Array(width * height), queue = [];
+      const add = (i) => {
+        if (seen[i]) return;
+        seen[i] = 1;
+        const p = i * 4;
+        const darkBackground = Math.max(data[p], data[p + 1], data[p + 2]) < 24;
+        const lightBackground = Math.min(data[p], data[p + 1], data[p + 2]) > 245;
+        if (data[p + 3] < 16 || darkBackground || lightBackground) queue.push(i);
+      };
+      for (let x = 0; x < width; x++) { add(x); add((height - 1) * width + x); }
+      for (let y = 0; y < height; y++) { add(y * width); add(y * width + width - 1); }
+      for (let n = 0; n < queue.length; n++) {
+        const i = queue[n]; data[i * 4 + 3] = 0;
+        if (i % width) add(i - 1);
+        if (i % width < width - 1) add(i + 1);
+        if (i >= width) add(i - width);
+        if (i < width * (height - 1)) add(i + width);
+      }
+      ctx.putImageData(pixels, 0, 0);
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      this.equipmentTextures.set(equipmentId, texture);
+    }
   }
   thought(type) { return THOUGHT.has(type); }
   texture(type) { return this.textures.get(ALIASES[type] || type); }
+  equipmentTexture(type) { return this.equipmentTextures.get(type); }
   dimensions(type, size) {
     const image = this.texture(type).image, longest = Math.max(image.width, image.height);
     return [size * image.width / longest, size * image.height / longest];
@@ -64,6 +104,22 @@ export class WeaponArt {
     if (!thought) icon.position.x = .37;
     return group;
   }
+  createEquipment(type) {
+    const texture = this.equipmentTexture(type);
+    if (!texture) return null;
+    const group = new THREE.Group();
+    const image = texture.image;
+    const longest = Math.max(image.width, image.height);
+    const size = 1.7;
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(size * image.width / longest, size * image.height / longest),
+      new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: .08, depthTest: false, depthWrite: false, side: THREE.DoubleSide })
+    );
+    mesh.position.z = .12;
+    mesh.renderOrder = 18;
+    group.add(mesh);
+    return group;
+  }
   fireballTexture() {
     if (this.flameTexture) return this.flameTexture;
     const canvas = document.createElement('canvas');
@@ -81,11 +137,11 @@ export class WeaponArt {
     return this.flameTexture;
   }
   projectile(p, type, radius) {
-    if (type === 'flameShot') {
+    if (type === 'flameShot' || type === 'napalm') {
       p.mesh.material.map = this.fireballTexture();
       p.mesh.material.color.setHex(0xffffff);
       p.mesh.material.needsUpdate = true;
-      p.mesh.scale.set(.72, .72, 1);
+      p.mesh.scale.set(type === 'napalm' ? .86 : .72, type === 'napalm' ? .86 : .72, 1);
       p.mesh.rotation.z = 0;
       return;
     }
@@ -105,7 +161,7 @@ export class WeaponArt {
       const v = p.body.linvel();
       // The atlas drawings point diagonally upward to the right.
       p.mesh.rotation.z = Math.atan2(v.y, v.x) - Math.PI / 6;
-    } else if (p.type !== 'mine' && p.type !== 'dynamite') p.mesh.rotation.z += dt * 2;
+    } else if (p.type !== 'mine' && p.type !== 'dynamite' && p.restingTime <= .08) p.mesh.rotation.z += dt * 2;
   }
 }
 

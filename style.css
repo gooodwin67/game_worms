@@ -583,10 +583,9 @@ button {
   flex-direction: column;
   justify-content: center;
   align-items: center;
-  width: 58px;
-  height: 44px;
-  margin-bottom: 3px;
-  border: 2px solid #55d9ba;
+  padding: 5px 5px;
+  margin-bottom: 2px;
+  border: 1.5px solid #55d9ba;
   border-radius: 6px;
   color: #e8f5f3;
   background: #0a1622;
@@ -604,8 +603,13 @@ button {
 }
 
 .jetpack-fuel-indicator strong {
-  font-size: 22px;
+  font-size: 12px;
   line-height: 1.1;
+}
+
+.worm-label.jetpack-active .worm-name,
+.worm-label.jetpack-active .worm-health-bar {
+  display: none;
 }
 
 .controls-help {

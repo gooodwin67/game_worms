@@ -121,6 +121,7 @@ export class Terrain {
 
     this.mesh = new THREE.Mesh(new THREE.PlaneGeometry(MAP.width, MAP.height), this.material);
     this.mesh.position.set(MAP.width / 2, MAP.height / 2, -0.15);
+    this.earthquakeOffset = { x: 0, y: 0 };
     scene.add(this.mesh);
 
     this.columns = Math.ceil(this.canvas.width / MAP.chunk);
@@ -364,6 +365,20 @@ export class Terrain {
       for (let row = y; row < bottom; row++) for (let k = x; k < end; k++) used[row * width + k] = 1;
       list.push(this.world.createCollider(RAPIER.ColliderDesc.cuboid((end - x) / this.scale / 2, (bottom - y) / this.scale / 2).setTranslation((px + (x + end) / 2) / this.scale, MAP.height - (py + (y + bottom) / 2) / this.scale).setFriction(0.9)));
     }
+  }
+
+  setEarthquakeOffset(x, y) {
+    const dx = x - this.earthquakeOffset.x, dy = y - this.earthquakeOffset.y;
+    if (Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) return { x: 0, y: 0 };
+    this.earthquakeOffset.x = x;
+    this.earthquakeOffset.y = y;
+    this.mesh.position.x += dx;
+    this.mesh.position.y += dy;
+    for (const collider of this.chunks.flat()) {
+      const position = collider.translation();
+      collider.setTranslation({ x: position.x + dx, y: position.y + dy });
+    }
+    return { x: dx, y: dy };
   }
 
   createExplosion(x, y, radius) {
