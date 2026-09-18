@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { MAP } from './core.js';
 
+const MAX_PARTICLE_GLINTS = 12;
+
 export class Terrain {
   constructor(scene, world, customImage = null) {
     this.world = world;
@@ -41,7 +43,16 @@ export class Terrain {
       uniforms: {
         mask: { value: this.texture },
         mapSize: { value: new THREE.Vector2(this.canvas.width, this.canvas.height) },
-        useCustomTexture: { value: this.hasCustomImage ? 1.0 : 0.0 }
+        useCustomTexture: { value: this.hasCustomImage ? 1.0 : 0.0 },
+        lightPos: { value: new THREE.Vector2(MAP.width * .5, MAP.height * .78) },
+        lightHeight: { value: 8.0 },
+        lightRadius: { value: 16.0 },
+        lightMode: { value: 0 },
+        lightColor: { value: new THREE.Color('#fff1c8') },
+        particleLightPos: { value: Array.from({ length: MAX_PARTICLE_GLINTS }, () => new THREE.Vector2()) },
+        particleLightColor: { value: Array.from({ length: MAX_PARTICLE_GLINTS }, () => new THREE.Color()) },
+        particleLightStrength: { value: new Float32Array(MAX_PARTICLE_GLINTS) },
+        particleLightCount: { value: 0 }
       },
       vertexShader: `
         varying vec2 vUv;
@@ -56,6 +67,15 @@ export class Terrain {
         uniform sampler2D mask;
         uniform vec2 mapSize;
         uniform float useCustomTexture;
+        uniform vec2 lightPos;
+        uniform float lightHeight;
+        uniform float lightRadius;
+        uniform int lightMode;
+        uniform vec3 lightColor;
+        uniform vec2 particleLightPos[12];
+        uniform vec3 particleLightColor[12];
+        uniform float particleLightStrength[12];
+        uniform float particleLightCount;
         varying vec2 vUv;
         varying vec2 vWorldPos;
 
@@ -91,6 +111,23 @@ export class Terrain {
             texture2D(mask, vUv - vec2(0.0, px.y * 2.0)).a
           ) * 0.25;
 
+          // Псевдорельеф из яркости соседних пикселей — аналог bump map из SVG-фильтра.
+          vec4 sampleLeft = texture2D(mask, vUv - vec2(px.x * 3.0, 0.0));
+          vec4 sampleRight = texture2D(mask, vUv + vec2(px.x * 3.0, 0.0));
+          vec4 sampleDown = texture2D(mask, vUv - vec2(0.0, px.y * 3.0));
+          vec4 sampleUp = texture2D(mask, vUv + vec2(0.0, px.y * 3.0));
+          vec3 luminance = vec3(.299, .587, .114);
+          float bumpCenter = dot(sampleCenter.rgb, luminance) * sampleCenter.a;
+          float bumpLeft = dot(sampleLeft.rgb, luminance) * sampleLeft.a;
+          float bumpRight = dot(sampleRight.rgb, luminance) * sampleRight.a;
+          float bumpDown = dot(sampleDown.rgb, luminance) * sampleDown.a;
+          float bumpUp = dot(sampleUp.rgb, luminance) * sampleUp.a;
+          vec3 normal = normalize(vec3((bumpLeft - bumpRight) * 2.6, (bumpDown - bumpUp) * 2.6, .85));
+          vec3 lightDirection = normalize(vec3(lightPos - vWorldPos, lightHeight));
+          float diffuse = max(dot(normal, lightDirection), 0.0);
+          vec3 reflected = reflect(-lightDirection, normal);
+          float specular = pow(max(reflected.z, 0.0), 28.0);
+
           vec3 finalColor;
 
           if (useCustomTexture > 0.5) {
@@ -111,6 +148,37 @@ export class Terrain {
 
             finalColor = mix(soil, grassColor, smoothstep(0.35, 0.8, grassMask));
             finalColor *= mix(0.7, 1.0, sampleSurround);
+          }
+
+          // Слабые локальные блики от разлетающихся частиц взрыва.
+          // Ограниченное число источников сохраняет стоимость шейдера предсказуемой.
+          for (int i = 0; i < 12; i++) {
+            float enabled = step(float(i) + .5, particleLightCount);
+            float particleDistance = distance(particleLightPos[i], vWorldPos);
+            float particleRadius = lightMode == 1 ? 2.4 : lightMode == 2 ? 3.1 : lightMode == 3 ? 5.4 : lightMode == 4 ? 4.2 : 6.0;
+            float particleFalloff = (1.0 - smoothstep(.08, particleRadius, particleDistance)) * enabled;
+            vec3 particleDirection = normalize(vec3(particleLightPos[i] - vWorldPos, 2.2));
+            float particleDiffuse = max(dot(normal, particleDirection), 0.0);
+            vec3 particleReflected = reflect(-particleDirection, normal);
+            float particleSpecular = pow(max(particleReflected.z, 0.0), 22.0);
+            float strength = particleLightStrength[i];
+            float particleGlow = particleFalloff * strength;
+            vec3 particleTint = particleLightColor[i];
+            if (lightMode == 1) {
+              particleTint = vec3(1.0);
+              particleGlow *= 1.2;
+            } else if (lightMode == 2) {
+              particleTint = lightColor;
+              particleGlow *= .78;
+            } else if (lightMode == 3) {
+              particleTint = mix(particleLightColor[i], lightColor, .45);
+              particleGlow *= 1.1;
+            } else if (lightMode == 4) {
+              particleTint = lightColor;
+              particleGlow *= .95;
+            }
+            finalColor += finalColor * (particleGlow * .22 + particleDiffuse * particleGlow * .34);
+            finalColor += particleTint * (particleGlow * .28 + particleSpecular * particleGlow * .2);
           }
 
           gl_FragColor = vec4(finalColor, edgeAlpha);
@@ -343,6 +411,56 @@ export class Terrain {
     const image = mask || this.ctx.getImageData(px, py, 1, 1);
     const offset = mask ? (py * mask.width + px) * 4 + 3 : 3;
     return image.data[offset] >= 128;
+  }
+
+  lowestSolidY() {
+    const data = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
+    for (let row = this.canvas.height - 1; row >= 0; row--) {
+      for (let column = 0; column < this.canvas.width; column++) {
+        if (data[(row * this.canvas.width + column) * 4 + 3] >= 128) return MAP.height - row / this.scale;
+      }
+    }
+    return 0;
+  }
+
+  setLightPosition(x, y) {
+    this.material.uniforms.lightPos.value.set(x, y);
+  }
+
+  setParticleLights(...sources) {
+    const positions = this.material.uniforms.particleLightPos.value;
+    const colors = this.material.uniforms.particleLightColor.value;
+    const strengths = this.material.uniforms.particleLightStrength.value;
+    let count = 0;
+    for (const data of sources) {
+      let sourceCount = 0;
+      const sourceLimit = Math.ceil(MAX_PARTICLE_GLINTS / sources.length);
+      while (data && sourceCount < Math.min(data.count || 0, sourceLimit) && count < MAX_PARTICLE_GLINTS) {
+        positions[count].copy(data.positions[sourceCount]);
+        colors[count].copy(data.colors[sourceCount]);
+        strengths[count] = data.strengths[sourceCount];
+        sourceCount++;
+        count++;
+      }
+    }
+    for (let i = 0; i < MAX_PARTICLE_GLINTS; i++) {
+      if (i >= count) strengths[i] = 0;
+    }
+    this.material.uniforms.particleLightCount.value = count;
+  }
+
+  setLightingMode(mode) {
+    const presets = {
+      soft: { index: 0, radius: 13, color: '#fff1c8' },
+      flashlight: { index: 1, radius: 8, color: '#ffffff' },
+      contour: { index: 2, radius: 12, color: '#8fe8ff' },
+      warm: { index: 3, radius: 11, color: '#ffad5c' },
+      neon: { index: 4, radius: 12, color: '#59d9ff' }
+    };
+    const preset = presets[mode] || presets.soft;
+    this.material.uniforms.lightMode.value = preset.index;
+    this.material.uniforms.lightRadius.value = preset.radius;
+    this.material.uniforms.lightColor.value.set(preset.color);
   }
 
   rebuild(cx, cy) {

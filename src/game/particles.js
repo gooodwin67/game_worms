@@ -1,7 +1,16 @@
 import * as THREE from 'three';
+
+const MAX_PARTICLE_GLINTS = 12;
+
 export class ExplosionParticles {
   constructor(scene, capacity = 4096) {
     this.capacity = capacity; this.cursor = 0; this.time = 0;
+    this.glintData = {
+      positions: Array.from({ length: MAX_PARTICLE_GLINTS }, () => new THREE.Vector2()),
+      colors: Array.from({ length: MAX_PARTICLE_GLINTS }, () => new THREE.Color()),
+      strengths: new Float32Array(MAX_PARTICLE_GLINTS),
+      count: 0
+    };
     this.geometry = new THREE.BufferGeometry();
     this.origin = new Float32Array(capacity * 3); this.velocity = new Float32Array(capacity * 3); this.birth = new Float32Array(capacity).fill(-100); this.life = new Float32Array(capacity).fill(1); this.kind = new Float32Array(capacity); this.color = new Float32Array(capacity * 3);
     for (const [name, array, size] of [['position',this.origin,3],['velocity',this.velocity,3],['birth',this.birth,1],['life',this.life,1],['kind',this.kind,1],['color',this.color,3]]) this.geometry.setAttribute(name,new THREE.BufferAttribute(array,size).setUsage(THREE.DynamicDrawUsage));
@@ -16,6 +25,34 @@ export class ExplosionParticles {
     }
     for(const name in this.geometry.attributes)this.geometry.attributes[name].needsUpdate=true;
   }
-  update(time){this.time=time;this.material.uniforms.time.value=time;}
+  update(time){
+    this.time=time;
+    this.material.uniforms.time.value=time;
+
+    // Собираем только несколько последних живых частиц для мягких бликов на рельефе.
+    // Все частицы по-прежнему рисуются, но не создают отдельные тяжёлые PointLight.
+    let count = 0;
+    for (let offset = 1; offset <= this.capacity && count < MAX_PARTICLE_GLINTS; offset++) {
+      const i = (this.cursor - offset + this.capacity) % this.capacity;
+      const age = this.time - this.birth[i];
+      if (age <= 0 || age >= this.life[i]) continue;
+
+      const fade = 1 - age / this.life[i];
+      if (fade < .06) continue;
+      const index = i * 3;
+      let x = this.origin[index] + this.velocity[index] * age;
+      let y = this.origin[index + 1] + this.velocity[index + 1] * age - 6 * age * age;
+      const floorY = this.origin[index + 1] - 1.5;
+      if (y < floorY) y = floorY + Math.abs(y - floorY) * .25;
+
+      const isFire = this.kind[i] < .42;
+      this.glintData.positions[count].set(x, y);
+      this.glintData.colors[count].set(isFire ? '#ff9b4a' : '#e6a35c');
+      this.glintData.strengths[count] = (isFire ? 3.0 : 2.2) * fade * fade;
+      count++;
+    }
+    this.glintData.count = count;
+    return this.glintData;
+  }
   dispose(){this.points.removeFromParent();this.geometry.dispose();this.material.dispose();}
 }

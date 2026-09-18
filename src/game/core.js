@@ -34,7 +34,7 @@ export class TurnMachine {
     this.wormOrders = game.teams.map(team => shuffledIndexes(team.worms.length));
     this.cursors = game.teams.map(() => -1);
     this.state = TURN.NEXT_TURN;
-    this.remaining = 45;
+    this.remaining = game.turnTimeLimit || Infinity;
     this.charge = 0;
     this.still = 0;
     this.shots = 2;
@@ -57,7 +57,8 @@ export class TurnMachine {
       g.supplyDropPending = false;
     } else if (this.team >= 0 && g.gameMode === 'quick') {
       g.completedTurns++;
-      if (g.completedTurns % 1 === 0) { g.spawnSupplyCrate(); g.supplyDropPending = true; return; }
+      const crateInterval = Math.max(1, 11 - g.weaponCrateFrequency);
+      if (g.completedTurns % crateInterval === 0) { g.spawnSupplyCrate(); g.supplyDropPending = true; return; }
     }
     let survivors = 0, winner = null;
     for (const team of g.teams) if (!team.surrendered && team.worms.some(w => w.alive)) { survivors++; winner = team; }
@@ -84,10 +85,10 @@ export class TurnMachine {
     g.turnIntroTime = 1.8;
     g.audio?.play('turnIndicator');
     g.activeMoved = false; // <-- Сбрасываем флаг движения для нового хода
-    g.wind = (Math.random() * 2 - 1) * WIND_MAX;
+    g.wind = g.windEnabled ? (Math.random() * 2 - 1) * WIND_MAX : 0;
     for (const worm of g.worms) if (worm.team === this.team) { worm.frozen = false; worm.speedBoost = false; worm.invisible = false; worm.laserSight = false; }
     for (const worm of g.worms) if (worm.alive && !worm.frozen && (worm.poison || worm.radiation)) g.damage(worm, Math.min(worm.hp - 1, 2), false, false);
-    this.remaining = g.trainingFreePractice ? Infinity : 45; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' && g.trainingWeapon !== 'free' ? g.trainingWeapon : 'bazooka'; this.weaponConsumed = false; this.state = TURN.WAITING_INPUT;
+    this.remaining = g.trainingFreePractice || !g.turnTimeLimit ? Infinity : g.turnTimeLimit; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' && g.trainingWeapon !== 'free' ? g.trainingWeapon : 'bazooka'; this.weaponConsumed = false; this.state = TURN.WAITING_INPUT;
     g.angle = g.active.facing < 0 ? Math.PI * .75 : Math.PI * .25;
     g.keys.clear(); g.weapons.resetTarget(); g.bot.reset();
   }

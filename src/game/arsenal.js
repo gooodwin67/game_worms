@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { MAP, GRAVITY, TURN } from './core.js';
 
+const MAX_FIRE_GLINTS = 12;
+
 export const ARSENAL = Object.freeze({
   bazooka:'Базука', homing:'Самонаводящаяся ракета', mortar:'Миномёт', pigeon:'Почтовый голубь', sheepLauncher:'Овцемёт', drill:'Бурение',
   grenade:'Граната', cluster:'Осколочная граната', banana:'Банано-бомба', battleAxe:'Боевой топор', earthquake:'Землетрясение',
@@ -31,6 +33,12 @@ export class Weapons {
     this.byCollider=new Map();this.pool=[];this.geometry=new THREE.PlaneGeometry(1,1);
     for(let i=0;i<160;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial({transparent:true,alphaTest:.08,depthWrite:false,side:THREE.DoubleSide}));mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh});}
     this.fireParticles=this.createFireParticleSystem(256);
+    this.fireGlintData={
+      positions:Array.from({length:MAX_FIRE_GLINTS},()=>new THREE.Vector2()),
+      colors:Array.from({length:MAX_FIRE_GLINTS},()=>new THREE.Color('#ff6a1a')),
+      strengths:new Float32Array(MAX_FIRE_GLINTS),
+      count:0
+    };
     this.tether=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),new THREE.LineBasicMaterial({color:0xe6cf9b}));this.tether.frustumCulled=false;this.tether.visible=false;game.scene.add(this.tether);
     this.marker=new THREE.Group();
     const markerMaterial=new THREE.MeshBasicMaterial({color:0xff6688,transparent:true,opacity:.95,depthWrite:false,side:THREE.DoubleSide});
@@ -265,7 +273,7 @@ export class Weapons {
     if(type==='madCows'){for(let i=0;i<this.cowCount;i++){const p=this.spawn('madCow',w.x+w.facing,w.y+.2,0,0,20);p.delay=i*.6;p.body.setEnabled(false);p.mesh.visible=false;}return true;}
     if(type==='frenchSheep'){for(let i=0;i<5;i++)this.spawn('frenchSheep',THREE.MathUtils.clamp(this.target.x+(i-2)*1.8,1,MAP.width-1),MAP.height+3+i,w.facing*2,-9,20);this.resetTarget();return true;}
     if(type==='carpet'||type==='armageddon'){const count=type==='carpet'?8:12;for(let i=0;i<count;i++)this.spawn(type,THREE.MathUtils.clamp(type==='armageddon'?Math.random()*MAP.width:this.target.x+(i-(count-1)/2)*2.2,1,MAP.width-1),MAP.height+3+i*.7,1,-10,12);this.resetTarget();return true;}
-    if(type==='indianTest'){g.waterLevel=(g.waterLevel||0)+3;g.water.visible=true;g.water.scale.y=g.waterLevel;g.water.position.y=g.waterLevel/2-.5;for(const worm of g.worms)if(worm.alive&&!worm.frozen)worm.radiation=Math.max(worm.radiation||0,5);this.resetTarget();g.turn.settle();return true;}
+    if(type==='indianTest'){g.waterLevel=(g.waterLevel||0)+3;g.water.visible=true;const waterHeight=g.baseWaterSurface+g.waterLevel-g.waterBottom;g.water.scale.y=waterHeight;g.water.material.uniforms.uVerticalScale.value=waterHeight;g.water.position.y=g.waterBottom+waterHeight/2;for(const worm of g.worms)if(worm.alive&&!worm.frozen)worm.radiation=Math.max(worm.radiation||0,5);this.resetTarget();g.turn.settle();return true;}
     if(type==='donkey'||type==='mbBomb'){this.spawn(type,this.target.x,MAP.height+5,0,-8,12);this.resetTarget();return true;}
     if(type==='banana'||type==='superBanana'||type==='holy'||type==='petrol'){
       const launchSpeed=type==='oldWoman'?2:speed,launchY=type==='oldWoman'?0:dy*launchSpeed;
@@ -304,7 +312,7 @@ export class Weapons {
           }
         }
       }
-      const index=p.index,ratio=THREE.MathUtils.clamp(hazard.remaining/hazard.duration,0,1),smoke=p.grounded&&(hazard.remaining<=0||ratio<.18),smokeRatio=hazard.remaining<=0?THREE.MathUtils.clamp(hazard.smokeRemaining/1.5,0,1):THREE.MathUtils.clamp((.18-ratio)/.18,0,1),phase=system.material.uniforms.uTime.value*6+p.seed,orbitX=p.grounded&&!smoke?Math.cos(phase)*.12:0,orbitY=p.grounded&&!smoke?Math.sin(phase)*.12:0,smokeSway=smoke?Math.sin(system.material.uniforms.uTime.value*3.2+p.seed)*.18:0;
+      const index=p.index,ratio=THREE.MathUtils.clamp(hazard.remaining/hazard.duration,0,1),extinguishFade=hazard.remaining<=0?THREE.MathUtils.clamp(hazard.smokeRemaining/1.5,0,1):1,smoke=p.grounded&&hazard.remaining<=0&&extinguishFade<.62,smokeRatio=THREE.MathUtils.clamp(hazard.smokeRemaining/1.5,0,1),phase=system.material.uniforms.uTime.value*6+p.seed,orbitX=p.grounded&&!smoke?Math.cos(phase)*.12:0,orbitY=p.grounded&&!smoke?Math.sin(phase)*.12:0,smokeSway=smoke?Math.sin(system.material.uniforms.uTime.value*3.2+p.seed)*.18:0;
       if(smoke&&!p.smokeStarted){p.smokeStarted=true;p.smokeAge=0;p.smokeBaseY=p.renderY??p.y;}
       if(smoke)p.smokeAge+=dt;
       const smokeRise=smoke?p.smokeAge*.85:0;
@@ -312,12 +320,30 @@ export class Weapons {
       if(!smoke)p.renderY=renderY;else p.renderY=renderY;
       positions[index*3]=p.x+orbitX+smokeSway;positions[index*3+1]=renderY;positions[index*3+2]=.42;
       const airborneFade=hazard.remaining<=0?THREE.MathUtils.clamp(hazard.smokeRemaining/1.5,0,1):1;
-      colors[index*4]=smoke?.18:1;colors[index*4+1]=smoke?.18:.18+.72*ratio;colors[index*4+2]=smoke?.2:.02;colors[index*4+3]=smoke?smokeRatio*.55:(hazard.remaining<=0?airborneFade*.25:.82);sizes[index]=p.size*(smoke?1.8:1);lifes[index]=ratio;
+      colors[index*4]=smoke?.18:1;colors[index*4+1]=smoke?.18:.18+.72*ratio;colors[index*4+2]=smoke?.2:.02;colors[index*4+3]=smoke?smokeRatio*.55:.82*extinguishFade;sizes[index]=p.size*(smoke?1.8:1);lifes[index]=smoke?smokeRatio:extinguishFade;
       }
     }
+    const fireCandidates=[];
+    for(const hazard of this.hazards)if(hazard.kind==='fire')for(const p of hazard.particleSlots){
+      if(!p.active||p.smokeStarted)continue;
+      const fade=hazard.remaining>0?1:THREE.MathUtils.clamp(hazard.smokeRemaining/1.5,0,1);
+      if(fade>0)fireCandidates.push({p,fade});
+    }
+    const glintCount=Math.min(MAX_FIRE_GLINTS,fireCandidates.length);
+    for(let i=0;i<glintCount;i++){
+      // Берём частицы равномерно по всей зоне огня, а не только первые слоты.
+      const candidate=fireCandidates[Math.floor(i*fireCandidates.length/glintCount)];
+      const { p, fade }=candidate;
+      const flicker=.78+.22*Math.sin(system.material.uniforms.uTime.value*8+p.seed*4.7);
+      this.fireGlintData.positions[i].set(p.x,p.renderY??p.y);
+      this.fireGlintData.colors[i].set('#ff6418');
+      this.fireGlintData.strengths[i]=1.2*fade*flicker;
+    }
+    this.fireGlintData.count=glintCount;
     for(let i=0;i<system.maxParticles;i++)if(!system.particles[i].active){sizes[i]=0;lifes[i]=0;colors[i*4+3]=0;}
     system.geometry.attributes.position.needsUpdate=true;system.geometry.attributes.color.needsUpdate=true;system.geometry.attributes.aSize.needsUpdate=true;system.geometry.attributes.aLife.needsUpdate=true;
   }
+  getFireLightData(){return this.fireGlintData;}
   update(dt) {
     const g=this.g;g.events.drainCollisionEvents(this.onCollision);this.retreat=Math.max(0,this.retreat-dt);this.projectile=null;
     for(let i=this.visualBullets.length-1;i>=0;i--){const bullet=this.visualBullets[i];bullet.age+=dt;const t=Math.min(1,bullet.age/bullet.duration);bullet.mesh.position.set(THREE.MathUtils.lerp(bullet.x1,bullet.x2,t),THREE.MathUtils.lerp(bullet.y1,bullet.y2,t),.35);bullet.mesh.scale.setScalar(1-t*.35);if(t>=1){bullet.mesh.removeFromParent();this.visualBullets.splice(i,1);}}

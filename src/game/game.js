@@ -25,6 +25,7 @@ const TRAINING_SCENARIOS = Object.freeze({
   longbow: { map: 'target', mode: 'sequential', indestructible: true, order: [2, 0, 1] },
   firePunch: { map: 'target', mode: 'close', indestructible: true },
   dynamite: { map: 'open', mode: 'sequential', indestructible: false, positions: [28, 45, 62] },
+  mine: { map: 'target', mode: 'sequential', indestructible: true, order: [0, 1, 2] },
   sheep: { map: 'open', mode: 'sequential', indestructible: false, positions: [35, 52, 69] },
   airstrike: { map: 'target', mode: 'sequential', indestructible: true, order: [1, 0, 2] },
   ninjaRope: { map: 'open', mode: 'free', indestructible: true }
@@ -105,7 +106,7 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0;
+    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
     this.inMenu = true; this.installUI(); this.bindInput();
   }
@@ -341,7 +342,7 @@ export class Game {
       img.onload = resolve;
       img.onerror = () => resolve(); // если файл не найден, создастся процедурная
     });
-    this.customMapImage = img.complete && img.naturalWidth !== 0 ? img : null;
+    this.defaultMapImage = img.complete && img.naturalWidth !== 0 ? img : null;
 
     const targetTrainingMap = new Image();
     targetTrainingMap.src = `${import.meta.env.BASE_URL}training/2.png`;
@@ -359,6 +360,9 @@ export class Game {
     });
     this.freeTrainingMapImage = freeTrainingMap.complete && freeTrainingMap.naturalWidth !== 0 ? freeTrainingMap : null;
 
+    if (this.selectedMapImage && this.mapImageReady?.[this.selectedMapIndex]) {
+      await this.mapImageReady[this.selectedMapIndex];
+    }
     this.configure();
   }
 
@@ -387,13 +391,26 @@ export class Game {
     // У каждой тренировки свой полигон: цели нужны только там, где они являются частью упражнения.
     this.trainingScenario = this.gameMode === 'training' ? TRAINING_SCENARIOS[this.trainingWeapon] : null;
     this.trainingFreePractice = this.trainingWeapon === 'free';
+    this.turnTimeLimit = Number(document.querySelector('#turn-time-limit')?.value || 0);
+    this.weaponCrateFrequency = Number(document.querySelector('#weapon-crate-count')?.value || 5);
+    this.windEnabled = document.querySelector('#wind-enabled')?.value !== 'no';
     this.targetTrainingActive = this.trainingScenario?.mode === 'sequential' || this.trainingScenario?.mode === 'close';
     this.targetTrainingStage = 0;
     this.trainingIndestructible = Boolean(this.trainingScenario?.indestructible);
-    const useFile = this.gameMode !== 'training' && document.querySelector('input[name="mapSource"]:checked')?.value === 'custom';
-    const mapImage = this.trainingScenario?.map === 'target' ? this.targetTrainingMapImage : this.trainingFreePractice ? this.freeTrainingMapImage : (useFile && this.customMapImage) ? this.customMapImage : null;
+    const useUploadedMap = this.gameMode !== 'training'
+      && document.querySelector('input[name="mapSource"]:checked')?.value === 'custom'
+      && this.uploadedMapImage;
+    const selectedMap = this.selectedMapImage?.complete && this.selectedMapImage.naturalWidth > 0
+      ? this.selectedMapImage
+      : null;
+    const mapImage = this.trainingScenario?.map === 'target'
+      ? this.targetTrainingMapImage
+      : this.trainingFreePractice
+        ? this.freeTrainingMapImage
+        : useUploadedMap || selectedMap;
 
     this.terrain = new Terrain(this.scene, this.world, mapImage);
+    this.terrain.setLightingMode(this.lightingMode);
     const trainingPlatforms = this.trainingScenario?.map === 'target' ? this.terrain.findPlatformTops() : [];
     if (trainingPlatforms.length >= 4) {
       const [playerPlatform, ...targetPlatforms] = trainingPlatforms;
@@ -420,9 +437,61 @@ export class Game {
         ? [11.8, 12.2, 12.6].map(x => ({ x, y: this.terrain.spawnHeight(x) }))
         : targetXs.map(x => ({ x, y: this.terrain.spawnHeight(x) }));
     }
-    this.water = new THREE.Mesh(new THREE.PlaneGeometry(MAP.width, 1), new THREE.MeshBasicMaterial({ color: 0x2f8fb3, transparent: true, opacity: .72 }));
-    this.water.position.set(MAP.width / 2, -.5, -.05);
-    this.water.visible = false;
+    this.baseWaterSurface = Math.max(3.8, this.terrain.lowestSolidY() + 3);
+    this.waterBottom = -6;
+    const initialWaterHeight = this.baseWaterSurface - this.waterBottom;
+    const waterMaterial = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uVerticalScale: { value: initialWaterHeight },
+        uColorDeep: { value: new THREE.Color('#0d324a') },
+        uColorShallow: { value: new THREE.Color('#2a7b9e') },
+        uColorFoam: { value: new THREE.Color('#88d4f2') }
+      },
+      vertexShader: `
+        uniform float uTime;
+        uniform float uVerticalScale;
+        varying vec2 vUv;
+        varying float vWave;
+
+        void main() {
+          vec3 pos = position;
+          float wave = sin(pos.x * .42 + uTime * 1.35) * .12
+            + cos(pos.x * .22 - uTime * .85) * .08
+            + sin(pos.x * .91 + uTime * 1.8) * .035;
+          float surface = smoothstep(.18, .5, position.y);
+          pos.y += wave * surface / max(uVerticalScale, 1.0);
+          vUv = uv;
+          vWave = wave;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uColorDeep;
+        uniform vec3 uColorShallow;
+        uniform vec3 uColorFoam;
+        varying vec2 vUv;
+        varying float vWave;
+
+        void main() {
+          float depth = smoothstep(0.0, 1.0, vUv.y);
+          vec3 waterColor = mix(uColorDeep, uColorShallow, depth);
+          float foam = smoothstep(.06, .16, vWave) * smoothstep(.72, 1.0, vUv.y);
+          float glint = pow(max(0.0, sin(vUv.x * 70.0 + uTime * 3.0)), 18.0) * .12 * smoothstep(.55, 1.0, vUv.y);
+          waterColor = mix(waterColor, uColorFoam, foam * .78);
+          waterColor += vec3(glint);
+          gl_FragColor = vec4(waterColor, .92);
+        }
+      `,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    });
+    this.water = new THREE.Mesh(new THREE.PlaneGeometry(MAP.width, 1, 128, 4), waterMaterial);
+    this.water.scale.y = initialWaterHeight;
+    this.water.position.set(MAP.width / 2, this.waterBottom + initialWaterHeight / 2, -.05);
+    this.water.visible = true;
     this.scene.add(this.water);
     this.particles = new ExplosionParticles(this.scene);
     this.weapons = new Weapons(this);
@@ -444,10 +513,13 @@ export class Game {
     this.angle = Math.PI / 4;
     this.keys.clear();
 
-    const count = this.trainingFreePractice ? 2 : this.gameMode === 'training' ? 2 : Math.max(2, Math.min(6, Number(this.teamCount.value) || 3)),
-      perTeam = this.trainingFreePractice ? 3 : this.trainingScenario ? 1 : this.gameMode === 'training' ? 3 : Math.max(1, Math.min(4, Number(this.wormCount.value) || 3));
     const rows = this.teamRows.children;
-    const spawnCount = count * perTeam;
+    const count = this.trainingFreePractice ? 2 : this.gameMode === 'training' ? 2 : Math.max(2, Math.min(4, Number(this.teamCount.value) || 2));
+    const defaultPerTeam = this.trainingFreePractice ? 3 : this.trainingScenario ? 1 : this.gameMode === 'training' ? 3 : 3;
+    const wormCounts = Array.from({ length: count }, (_, index) => this.trainingFreePractice || this.trainingScenario || this.gameMode === 'training'
+      ? defaultPerTeam
+      : Math.max(1, Math.min(5, Number(rows[index]?.dataset.worms) || defaultPerTeam)));
+    const spawnCount = wormCounts.reduce((sum, amount) => sum + amount, 0);
     const spawnSegment = (MAP.width - 10) / spawnCount;
     let spawnLocations;
     if (this.terrain.hasCustomImage) {
@@ -486,15 +558,15 @@ export class Game {
     let nameIndex = 0;
 
     for (let t = 0; t < count; t++) {
-      const configuredName = rows[t].querySelector('input').value.trim() || `Команда ${t + 1}`,
-        name = this.trainingFreePractice ? `Команда ${t + 1}` : this.gameMode === 'training' ? (t === 0 ? 'Учебный отряд' : 'Мишени') : configuredName,
-        selectedBot = rows[t].querySelector('select').value,
-        bot = this.gameMode === 'training' && !this.trainingFreePractice && t > 0 ? 'target' : selectedBot;
+      const configuredName = (rows[t].querySelector('input').value.trim() || `Команда ${t + 1}`).slice(0, 10),
+        name = (this.trainingFreePractice ? `Команда ${t + 1}` : this.gameMode === 'training' ? (t === 0 ? 'Учебный отряд' : 'Мишени') : configuredName).slice(0, 10),
+        selectedBot = rows[t].querySelector('.team-type').value === 'bot' ? rows[t].querySelector('.team-difficulty-select').value : '',
+        bot = this.trainingFreePractice ? '' : this.gameMode === 'training' && t > 0 ? 'target' : selectedBot;
       const inventory = Object.fromEntries(Object.keys(ARSENAL).map(id => [id, UNLIMITED_WEAPONS.has(id) ? Infinity : 1]));
       const team = { name, bot, passive: bot === 'target', color: COLORS[t], worms: [], inventory };
       this.teams.push(team);
 
-      for (let i = 0; i < perTeam; i++) {
+      for (let i = 0; i < wormCounts[t]; i++) {
         const isTrainingTarget = this.targetTrainingActive && t === 1;
         const trainingPosition = this.trainingScenario && !this.trainingFreePractice
           ? (isTrainingTarget ? this.targetTrainingTargets[0] : this.targetTrainingPlayerPosition)
@@ -807,7 +879,7 @@ export class Game {
     const collider = this.world.createCollider(RAPIER.ColliderDesc.cuboid(.85, .55).setMass(1).setFriction(1.5).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max).setRestitution(0).setCollisionGroups(0x00040001), body);
     const visual = this.createSupplyCrate();
     this.scene.add(visual.root);
-    const crate = { body, collider, visual, x, y: MAP.height + 4, type: this.randomSupplyWeapon(), landed: false, parachuteTime: 0, parachuteReleased: false, angleFrom: 0, angleTo: 0, angleBlend: 1, supplyCrate: true, dispose: () => { this.world.removeRigidBody(body); visual.dispose(); } };
+    const crate = { body, collider, visual, x, y: MAP.height + 4, type: this.randomSupplyWeapon(), landed: false, dropTime: 0, parachuteTime: 0, parachuteReleased: false, angleFrom: 0, angleTo: 0, angleBlend: 1, supplyCrate: true, dispose: () => { this.world.removeRigidBody(body); visual.dispose(); } };
     this.supplyCrates.push(crate);
     this.cameraFocus = crate;
   }
@@ -816,6 +888,7 @@ export class Game {
     for (let index = this.supplyCrates.length - 1; index >= 0; index--) {
       const crate = this.supplyCrates[index];
       const p = crate.body.translation();
+      crate.dropTime += dt;
       crate.x = p.x;
       crate.y = p.y;
       if (!crate.landed && !crate.parachuteReleased) {
@@ -832,7 +905,10 @@ export class Game {
       crate.visual.root.rotation.z = crate.body.rotation();
       const landingHeights = [-.85, -.42, 0, .42, .85].map(offset => this.terrain.landingHeight(currentPosition.x + offset, .08, .55)).filter(value => value !== null);
       const landingY = landingHeights.length ? Math.max(...landingHeights) : null;
-      if (!crate.landed && landingY !== null && currentPosition.y <= landingY + .24 && crate.body.linvel().y <= .5) {
+      const velocity = crate.body.linvel();
+      const restingOnGeometry = crate.body.isSleeping() && Math.abs(velocity.y) < .2;
+      const timedOut = crate.dropTime > 8 && currentPosition.y < MAP.height + 1;
+      if (!crate.landed && landingY !== null && (currentPosition.y <= landingY + .24 && velocity.y <= .5 || restingOnGeometry || timedOut)) {
         crate.landed = true;
         const leftY = this.terrain.landingHeight(currentPosition.x - .7, .08, .55);
         const rightY = this.terrain.landingHeight(currentPosition.x + .7, .08, .55);
@@ -882,7 +958,7 @@ export class Game {
     });
   }
 
-  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.weapons?.detonateSupplyCrates?.(x,y,radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
+  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.weapons?.detonateSupplyCrates?.(x, y, radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
   damage(w, amount, force = false, impact = true) {
     if (!w.alive || (w.frozen && !force)) return;
     const previousHp = w.hp;
@@ -942,6 +1018,7 @@ export class Game {
 
   update(dt) {
     this.time += dt;
+    if (this.water?.material?.uniforms?.uTime) this.water.material.uniforms.uTime.value = this.time;
     this.earthquakeShake = Math.max(0, this.earthquakeShake - dt);
     this.damageDisplayTime = Math.max(0, this.damageDisplayTime - dt);
     this.turnIntroTime = Math.max(0, this.turnIntroTime - dt);
@@ -1086,6 +1163,7 @@ export class Game {
     this.weapons.updateMovement(dt);
     this.world.step(this.events);
     this.weapons.update(dt);
+    this.terrain?.setParticleLights(this.particles.glintData, this.weapons.getFireLightData());
     this.syncWorms(dt);
     this.updateSupplyCrates(dt);
     this.updateDisplayedHealth(dt);
@@ -1102,7 +1180,7 @@ export class Game {
         w.impactSpinDirection = Math.abs(horizontalImpulse) > .05 ? -Math.sign(horizontalImpulse) : -w.facing;
       }
       if (w.y < -3 || w.x < -3 || w.x > MAP.width + 3) { this.damage(w, w.hp, true); continue; }
-      if (this.waterLevel > 0 && w.y < this.waterLevel) { this.damage(w, w.hp, true); continue; }
+      if (w.y - .45 < this.baseWaterSurface + this.waterLevel) { this.damage(w, w.hp, true); continue; }
       if (w.body.isSleeping()) continue;
 
       w.grounded = false; w.groundNormalX = 0; w.groundNormalY = 1;
@@ -1573,9 +1651,9 @@ export class Game {
       }
     });
     this.canvas.addEventListener('pointermove', e => {
-      if (!this.humanInput() || this.weaponPanel.open || this.turnIntroTime > 0) return;
       const rect = this.canvas.getBoundingClientRect();
       this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
+      if (!this.humanInput() || this.weaponPanel.open || this.turnIntroTime > 0) return;
       if (!NO_AIM_WEAPONS.has(this.turn.weapon) && (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || this.weapons.flame)) {
         this.angle = Math.atan2(this.vector.y - this.active.y, this.vector.x - this.active.x);
         this.active.facing = Math.cos(this.angle) < 0 ? -1 : 1;
@@ -1610,51 +1688,71 @@ export class Game {
 
   installUI() {
     const start = document.querySelector('#start-button');
+    const startSubtitle = document.querySelector('.start-subtitle');
     start.hidden = true;
     const modeSelect = document.createElement('div');
     modeSelect.className = 'game-mode-select';
     modeSelect.innerHTML = `
       <button type="button" data-mode="training">
         <strong>Тренировка</strong>
-        <span>Свободная практика против неподвижных мишеней</span>
+        <span>Свободная тренировка и освоение нового оружия</span>
       </button>
       <button type="button" data-mode="quick">
         <strong>Быстрый матч</strong>
-        <span>Команда игрока против среднего бота</span>
+        <span>Игра на одном устройстве против игроков и ботов</span>
+      </button>
+      <button type="button" data-mode="settings">
+        <strong>Настройки</strong>
+        <span>Звук и язык игры</span>
       </button>
     `;
     const trainingWeapons = [
-      ['free', 'Свободная карта, бесконечное оружие и бессмертие'],
-      ['jetPack', 'Управление полётом и посадка'],
-      ['bazooka', 'Траектория и сила выстрела'],
-      ['homing', 'Наведение ракеты на цель'],
-      ['pigeon', 'Выбор цели и точное попадание'],
-      ['grenade', 'Бросок, запал и отскок'],
-      ['shotgun', 'Два точных выстрела'],
-      ['longbow', 'Прямой выстрел и дальность'],
-      ['firePunch', 'Удар в упор и направление импульса'],
-      ['dynamite', 'Установка заряда и безопасный отход'],
-      ['sheep', 'Управляемая овечка и момент взрыва'],
-      ['airstrike', 'Выбор зоны авиаудара'],
-      ['ninjaRope', 'Зацеп, раскачка и отпускание']
-    ];
+      { id: 'free', title: 'Свободная тренировка', description: 'Открытая карта, бесконечное оружие и удобный режим для практики.' },
+      { id: 'bazooka', description: 'Траектория и сила выстрела' },
+      { id: 'shotgun', description: 'Два точных выстрела' },
+      { id: 'longbow', description: 'Прямой выстрел и дальность' },
+      { id: 'homing', description: 'Наведение ракеты на цель' },
+      { id: 'grenade', description: 'Бросок, запал и отскок' },
+      { id: 'dynamite', description: 'Установка заряда и безопасный отход' },
+      { id: 'mine', description: 'Размещение и срабатывание' },
+      { id: 'sheep', description: 'Управляемая овечка и момент взрыва' },
+      { id: 'pigeon', description: 'Выбор цели и точное попадание' },
+      { id: 'airstrike', description: 'Выбор зоны авиаудара' },
+      { id: 'firePunch', description: 'Удар в упор и направление импульса' },
+      { id: 'ninjaRope', description: 'Зацеп, раскачка и отпускание' },
+      { id: 'jetPack', description: 'Управление полётом и посадка' }
+    ].map(weapon => ({ ...weapon, title: weapon.title || ARSENAL[weapon.id] }));
     const trainingSelect = document.createElement('div');
     trainingSelect.className = 'training-select';
     trainingSelect.hidden = true;
-    trainingSelect.innerHTML = '<div class="training-select-heading"><button type="button" class="training-back" aria-label="Вернуться к выбору режима">←</button><div><strong>Выберите тренировку</strong><span>Какое оружие хотите освоить?</span></div></div><div class="training-grid"></div>';
+    trainingSelect.innerHTML = `
+      <div class="training-select-heading">
+        <span class="training-kicker">УТИНАЯ АРТИЛЛЕРИЯ</span>
+        <strong>ТРЕНИРОВКА</strong>
+        <span>Выберите оружие или тип тренировки</span>
+      </div>
+      <div class="training-selection">
+        <button type="button" class="training-feature is-selected" data-weapon="free" aria-pressed="true"></button>
+        <div class="training-grid"></div>
+      </div>
+      <div class="training-actions">
+        <button type="button" class="training-back">← <span>Назад</span></button>
+      </div>
+    `;
     const trainingGrid = trainingSelect.querySelector('.training-grid');
+    const trainingFeature = trainingSelect.querySelector('.training-feature');
     const arsenalIds = Object.keys(ARSENAL);
-    for (const [id, description] of trainingWeapons) {
+    let selectedTrainingWeapon = 'free';
+    trainingFeature.setAttribute('aria-label', 'Свободная тренировка. Открытая карта, бесконечное оружие и удобный режим для практики.');
+    trainingFeature.innerHTML = '<div class="training-feature-art" aria-hidden="true"><span>∞</span></div><strong>Свободная тренировка</strong><span>Открытая карта, бесконечное оружие и удобный режим для практики.</span>';
+    for (const weapon of trainingWeapons.filter(item => item.id !== 'free')) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'training-tile';
-      button.dataset.weapon = id;
-      const title = id === 'free' ? 'Свободная тренировка' : ARSENAL[id];
-      button.setAttribute('aria-label', `${title}. ${description}`);
-      if (id === 'free') {
-        button.innerHTML = `<div class="training-weapon-icon training-free-icon" aria-hidden="true">∞</div><strong>${title}</strong><span>${description}</span>`;
-      } else {
-        const index = arsenalIds.indexOf(id);
+      button.dataset.weapon = weapon.id;
+      button.setAttribute('aria-label', `${weapon.title}. ${weapon.description}`);
+      const index = arsenalIds.indexOf(weapon.id);
+      if (index >= 0 && WEAPON_ICON_REGIONS[index]) {
         const [x, y, width, height] = WEAPON_ICON_REGIONS[index];
         button.innerHTML = `
           <svg class="training-weapon-icon" aria-hidden="true" viewBox="0 0 ${width} ${height}" focusable="false">
@@ -1662,34 +1760,103 @@ export class Game {
               <image href="${import.meta.env.BASE_URL}assets/weapon-atlas.png" width="749" height="2098"></image>
             </svg>
           </svg>
-          <strong>${title}</strong>
-          <span>${description}</span>
+          <strong>${weapon.title}</strong>
+          <span>${weapon.description}</span>
         `;
+      } else {
+        button.innerHTML = `<div class="training-weapon-icon training-free-icon" aria-hidden="true">✦</div><strong>${weapon.title}</strong><span>${weapon.description}</span>`;
       }
       trainingGrid.append(button);
     }
+    const selectTrainingWeapon = weapon => {
+      selectedTrainingWeapon = weapon;
+      trainingSelect.querySelectorAll('[data-weapon]').forEach(button => {
+        const selected = button.dataset.weapon === weapon;
+        button.classList.toggle('is-selected', selected);
+        button.setAttribute('aria-pressed', String(selected));
+      });
+    };
+    trainingSelect.querySelectorAll('[data-weapon]').forEach(button => button.addEventListener('click', () => {
+      selectTrainingWeapon(button.dataset.weapon);
+      launchTraining(selectedTrainingWeapon);
+    }));
     const setup = document.createElement('div');
     setup.className = 'match-setup';
     setup.hidden = true;
     setup.innerHTML = `
-      <button type="button" class="setup-back">← К выбору режима</button>
-      <div class="match-options">
-        <label>Команды <input id="team-count" type="number" min="2" max="6" value="3"></label>
-        <label>Червей <input id="worm-count" type="number" min="1" max="4" value="3"></label>
+      <div class="quick-setup-grid">
+        <section class="setup-card setup-map-card">
+          <h2>🗺️ Карта</h2>
+          <div class="setup-map-switcher"><button type="button" class="map-arrow map-prev" aria-label="Предыдущая карта">‹</button><img class="setup-map-preview" src="./maps/sky-islands.png" alt="Предпросмотр карты"><div class="setup-map-placeholder" hidden>Карта будет<br>сгенерирована<br>перед матчем</div><button type="button" class="map-arrow map-next" aria-label="Следующая карта">›</button></div>
+          <strong class="setup-map-name">Небесные острова</strong>
+          <p class="setup-map-description">Классическая карта с островами и удобными позициями.</p>
+          <div class="map-thumbnails" aria-label="Миниатюры карт"></div>
+          <div class="setup-map-actions"><button type="button" class="setup-random-map"><span aria-hidden="true">⚄</span> Случайная карта</button><button type="button" class="setup-generate-map"><span aria-hidden="true">⤨</span> Генерация</button></div>
+          <div class="map-select-row" hidden><label><input type="radio" name="mapSource" value="generate"> Генерировать</label><label><input type="radio" name="mapSource" value="custom" checked> Из файла</label><input type="file" id="map-file-input" accept="image/png, image/jpeg, image/webp"></div>
+        </section>
+        <section class="setup-card setup-teams-card">
+          <div class="setup-card-heading"><h2>🦆 Команды</h2></div>
+          <div id="team-rows"></div>
+          <button type="button" class="add-team-button add-team-slot"><span aria-hidden="true">⊕</span> Добавить команду</button>
+        </section>
+        <section class="setup-card setup-options-card">
+          <h2>⚙️ Параметры матча</h2>
+          <div class="match-options">
+            <input id="team-count" type="number" min="2" max="4" value="2" hidden>
+            <input id="worm-count" type="number" min="1" max="4" value="3" hidden>
+            <label class="match-option"><span class="option-icon" aria-hidden="true">⌛</span><span>Время на ход</span><select id="turn-time-limit" aria-label="Время на ход"><option value="0">Без лимита</option><option value="45">45 сек</option><option value="60" selected>60 сек</option><option value="90">90 сек</option></select></label>
+            <label class="match-option"><span class="option-icon" aria-hidden="true">≋</span><span class="option-label">Ветер</span><select id="wind-enabled" aria-label="Ветер"><option value="yes" selected>Да</option><option value="no">Нет</option></select></label>
+            <label class="match-option"><span class="option-icon" aria-hidden="true">🌊</span><span class="option-label">Подъём воды</span><select aria-label="Подъём воды"><option>Выкл</option><option>Вкл</option></select></label>
+            <label class="match-option"><span class="option-icon" aria-hidden="true">♥</span><span class="option-label">Здоровье утки</span><select aria-label="Здоровье утки"><option>50</option><option selected>100</option><option>150</option></select></label>
+            <label class="match-option weapon-crates-option"><span class="option-icon" aria-hidden="true">📦</span><span class="option-label">Ящики с оружием</span><span class="weapon-crate-control"><input id="weapon-crate-count" type="range" min="1" max="10" step="1" value="5" aria-label="Частота появления ящиков с оружием"><output for="weapon-crate-count">5</output></span></label>
+            <label class="match-option"><span class="option-icon" aria-hidden="true">⚑</span><span class="option-label">Количество раундов</span><select aria-label="Количество раундов"><option>Без лимита</option><option>3</option><option>5</option><option>10</option></select></label>
+          </div>
+        </section>
       </div>
-      <div class="map-select-row" style="margin: 10px 0; display: flex; gap: 8px; align-items: center; justify-content: center;">
-        <label style="cursor: pointer;"><input type="radio" name="mapSource" value="generate" checked> Генерировать</label>
-        <label style="cursor: pointer;"><input type="radio" name="mapSource" value="custom"> Из файла</label>
-        <input type="file" id="map-file-input" accept="image/png, image/jpeg, image/webp" style="display: none; max-width: 140px; font-size: 11px;">
-      </div>
-      <div id="team-rows"></div>
+      <div class="setup-actions"><button type="button" class="setup-back">← Назад</button><svg class="setup-doodle" viewBox="0 0 180 80" aria-hidden="true"><path d="M5 35 Q35 0 40 48 T75 55 M95 36 C75 12 127 6 123 34 L150 38 Q145 70 112 65 Q85 61 95 36 M98 13 L94 2 L105 8 L114 1 L119 14 M150 18 Q166 3 174 21 L176 36 L158 28"/><circle cx="112" cy="27" r="2"/></svg></div>
     `;
     start.before(modeSelect, trainingSelect, setup);
 
     this.teamCount = setup.querySelector('#team-count');
     this.wormCount = setup.querySelector('#worm-count');
     this.teamRows = setup.querySelector('#team-rows');
+    const weaponCrateCount = setup.querySelector('#weapon-crate-count');
+    const weaponCrateOutput = setup.querySelector('.weapon-crate-control output');
+    weaponCrateCount.addEventListener('input', () => { weaponCrateOutput.value = weaponCrateCount.value; });
     this.customMapImage = null;
+    this.uploadedMapImage = null;
+    const mapCatalog = [
+      { file: 'sky-islands.png', name: 'Небесные острова', description: 'Классическая карта с островами и удобными позициями.' },
+      { file: 'fortress-islands.jpg', name: 'Островные крепости', description: 'Карта с крепостями и открытыми площадками.' },
+      { file: 'waterfall-valley.jpg', name: 'Долина водопадов', description: 'Высоты, впадины и водопады для тактических атак.' },
+      { file: 'rocky-hills.jpg', name: 'Каменистые холмы', description: 'Неровный рельеф с множеством укрытий.' },
+      { file: 'green-islands.jpg', name: 'Зелёные острова', description: 'Островная карта с естественными перепадами высоты.' },
+      { file: 'desert-canyon.jpg', name: 'Пустынный каньон', description: 'Каньоны и открытые склоны для дальних выстрелов.' }
+    ];
+    this.mapCatalog = mapCatalog;
+    this.mapImageReady = [];
+    this.mapImageCache = this.mapCatalog.map(({ file }) => {
+      const image = new Image();
+      this.mapImageReady.push(new Promise(resolve => {
+        image.onload = () => resolve(true);
+        image.onerror = () => resolve(false);
+      }));
+      image.src = `${import.meta.env.BASE_URL}maps/${encodeURIComponent(file)}`;
+      return image;
+    });
+    this.selectedMapIndex = 0;
+    this.selectedMapImage = this.mapImageCache[0];
+
+    const mapThumbnails = setup.querySelector('.map-thumbnails');
+    this.mapCatalog.forEach((map, index) => {
+      const thumbnail = document.createElement('button');
+      thumbnail.type = 'button';
+      thumbnail.className = `map-thumbnail${index === 0 ? ' is-selected' : ''}`;
+      thumbnail.title = map.name;
+      thumbnail.innerHTML = `<img src="${this.mapImageCache[index].src}" alt="${map.name}">`;
+      thumbnail.addEventListener('click', () => selectMap(index));
+      mapThumbnails.append(thumbnail);
+    });
 
     const fileInput = setup.querySelector('#map-file-input');
     const radioInputs = setup.querySelectorAll('input[name="mapSource"]');
@@ -1698,7 +1865,7 @@ export class Game {
       radio.addEventListener('change', (e) => {
         if (e.target.value === 'custom') {
           fileInput.style.display = 'inline-block';
-          if (!this.customMapImage) fileInput.click();
+          if (!this.uploadedMapImage) fileInput.click();
         } else {
           fileInput.style.display = 'none';
         }
@@ -1712,6 +1879,7 @@ export class Game {
       reader.onload = (evt) => {
         const img = new Image();
         img.onload = () => {
+          this.uploadedMapImage = img;
           this.customMapImage = img;
         };
         img.src = evt.target.result;
@@ -1719,17 +1887,119 @@ export class Game {
       reader.readAsDataURL(file);
     });
 
+    const mapPreview = setup.querySelector('.setup-map-preview');
+    const mapPlaceholder = setup.querySelector('.setup-map-placeholder');
+    const mapName = setup.querySelector('.setup-map-name');
+    const mapDescription = setup.querySelector('.setup-map-description');
+    const selectMap = index => {
+      this.selectedMapIndex = (index + this.mapCatalog.length) % this.mapCatalog.length;
+      const map = this.mapCatalog[this.selectedMapIndex];
+      this.uploadedMapImage = null;
+      this.selectedMapImage = this.mapImageCache[this.selectedMapIndex];
+      mapPreview.src = this.selectedMapImage.src;
+      mapPreview.hidden = false;
+      mapPlaceholder.hidden = true;
+      mapName.textContent = map.name;
+      mapDescription.textContent = map.description;
+      setup.querySelector('input[name="mapSource"][value="custom"]').checked = true;
+      mapThumbnails.querySelectorAll('.map-thumbnail').forEach((thumbnail, thumbnailIndex) => thumbnail.classList.toggle('is-selected', thumbnailIndex === this.selectedMapIndex));
+    };
+    setup.querySelector('.map-prev').addEventListener('click', () => selectMap(this.selectedMapIndex - 1));
+    setup.querySelector('.map-next').addEventListener('click', () => selectMap(this.selectedMapIndex + 1));
+    setup.querySelector('.setup-random-map').addEventListener('click', () => selectMap(Math.floor(Math.random() * this.mapCatalog.length)));
+    setup.querySelector('.setup-generate-map').addEventListener('click', () => {
+      this.uploadedMapImage = null;
+      this.selectedMapImage = null;
+      mapPreview.hidden = true;
+      mapPlaceholder.hidden = false;
+      setup.querySelector('input[name="mapSource"][value="generate"]').checked = true;
+      mapName.textContent = 'Случайная генерация';
+      mapDescription.textContent = 'Новая карта будет создана перед матчем.';
+    });
+
     for (let i = 0; i < 6; i++) {
       const row = document.createElement('div');
       row.className = 'team-row';
-      row.innerHTML = `<input aria-label="Имя команды ${i + 1}" maxlength="24" value="Команда ${i + 1}"><select aria-label="Управление командой ${i + 1}"><option value="">Человек</option><option value="easy">Бот · легко</option><option value="medium">Бот · средне</option><option value="hard">Бот · сложно</option></select>`;
-      row.hidden = i >= 3;
+      row.style.setProperty('--team-color', `#${COLORS[i].toString(16).padStart(6, '0')}`);
+      row.dataset.worms = '3';
+      row.innerHTML = `<div class="team-identity"><svg class="team-duck-icon" viewBox="0 0 64 68" aria-hidden="true"><ellipse cx="31" cy="62" rx="22" ry="4" fill="#000" opacity=".3"/><path d="M18 36 C6 43 13 59 31 59 C49 59 56 45 52 38 L44 42 L37 32Z" fill="var(--team-color)" stroke="#162b27" stroke-width="2"/><circle cx="30" cy="27" r="18" fill="var(--team-color)" stroke="#162b27" stroke-width="2"/><path d="M34 29 Q62 26 51 38 Q42 43 33 36" fill="#ffbb28" stroke="#a46116" stroke-width="2"/><ellipse cx="34" cy="25" rx="3" ry="5" fill="#101d25"/><circle cx="35" cy="23" r="1" fill="white"/><path d="M11 22 Q8 3 29 3 Q48 3 48 20 L53 23 Q30 31 9 26Z" fill="#425c3c" stroke="#152c24" stroke-width="2"/><path d="M17 16 Q19 6 29 7" fill="none" stroke="#9fae7a" stroke-width="3" stroke-linecap="round"/><path d="M18 44 Q30 35 31 48 Q28 56 19 51" fill="#fff" opacity=".2"/></svg><span class="team-color-swatch" aria-hidden="true"></span><input aria-label="Имя команды ${i + 1}" maxlength="10" value="Команда ${i + 1}"></div><div class="team-type-control"><div class="team-type-picker" role="radiogroup" aria-label="Управление командой ${i + 1}"><button type="button" class="team-type-choice is-selected" data-value="human" aria-label="Человек" aria-pressed="true"><span aria-hidden="true">👤</span></button><button type="button" class="team-type-choice" data-value="bot" aria-label="Бот" aria-pressed="false"><span aria-hidden="true">🤖</span></button></div><select class="team-type" aria-label="Управление командой ${i + 1}"><option value="human">👤 Человек</option><option value="bot">🤖 Бот</option></select><div class="team-difficulty" hidden><div class="difficulty-picker" role="radiogroup" aria-label="Уровень бота"><button type="button" class="difficulty-choice" data-value="easy" aria-label="Лёгкий уровень" aria-pressed="false"><svg viewBox="0 0 80 64" aria-hidden="true"><path d="M14 32 40 15 66 32 40 49Z"/></svg></button><button type="button" class="difficulty-choice is-selected" data-value="medium" aria-label="Средний уровень" aria-pressed="true"><svg viewBox="0 0 80 64" aria-hidden="true"><path d="M14 40 40 23 66 40 40 57Z M14 17 40 0 66 17 40 34Z"/></svg></button><button type="button" class="difficulty-choice" data-value="hard" aria-label="Сложный уровень" aria-pressed="false"><svg viewBox="0 0 80 64" aria-hidden="true"><path d="M14 48 40 31 66 48 40 65Z M14 25 40 8 66 25 40 42Z M14 2 40 -15 66 2 40 19Z"/></svg></button></div><select class="team-difficulty-select" aria-label="Уровень бота"><option value="easy">Легкий</option><option value="medium" selected>Средний</option><option value="hard">Тяжелый</option></select></div></div><div class="worm-count-control"><span>Утки:</span><div><button type="button" class="worm-step-button" data-step="-1" aria-label="Уменьшить количество уток">‹</button><strong class="worm-count-value">3</strong><button type="button" class="worm-step-button" data-step="1" aria-label="Увеличить количество уток">›</button></div></div><button type="button" class="remove-team-button" aria-label="Удалить команду">×</button>`;
+      const teamType = row.querySelector('.team-type');
+      const difficulty = row.querySelector('.team-difficulty');
+      const difficultySelect = row.querySelector('.team-difficulty-select');
+      const difficultyPicker = row.querySelector('.difficulty-picker');
+      const difficultyChoices = [...difficultyPicker.querySelectorAll('.difficulty-choice')];
+      difficultySelect.hidden = true;
+      const typeControl = row.querySelector('.team-type-control');
+      const typePicker = row.querySelector('.team-type-picker');
+      const typeChoices = typePicker.querySelectorAll('.team-type-choice');
+      typeChoices[0].innerHTML = '<span aria-hidden="true">👤</span><span>Игрок</span>';
+      typeChoices[1].innerHTML = '<span aria-hidden="true">🤖</span><span>Бот</span>';
+      difficulty.prepend(typeChoices[1]);
+      const typeSetting = document.createElement('div');
+      typeSetting.className = 'team-type-setting';
+      typeSetting.append(typePicker, difficulty);
+      typeControl.insertBefore(typeSetting, teamType);
+      difficultyChoices.forEach(choice => choice.addEventListener('click', () => {
+        difficultySelect.value = choice.dataset.value;
+        difficultyChoices.forEach(option => {
+          const selected = option === choice;
+          option.classList.toggle('is-selected', selected);
+          option.setAttribute('aria-pressed', String(selected));
+        });
+      }));
+      const syncTeamTypeChoice = () => {
+        row.querySelectorAll('.team-type-choice').forEach(choice => {
+          const selected = choice.dataset.value === teamType.value;
+          choice.classList.toggle('is-selected', selected);
+          choice.setAttribute('aria-pressed', String(selected));
+        });
+        difficulty.hidden = false;
+        difficultyPicker.hidden = teamType.value !== 'bot';
+      };
+      row.querySelectorAll('.team-type-choice').forEach(choice => choice.addEventListener('click', () => {
+        teamType.value = choice.dataset.value;
+        syncTeamTypeChoice();
+      }));
+      teamType.addEventListener('change', syncTeamTypeChoice);
+      if (i === 1) {
+        teamType.value = 'bot';
+      }
+      syncTeamTypeChoice();
+      row.querySelector('.remove-team-button').hidden = i < 2;
+      row.hidden = i >= 2;
       this.teamRows.append(row);
     }
     const syncTeamRows = () => {
-      for (let i = 0; i < 6; i++) this.teamRows.children[i].hidden = i >= Math.max(2, Math.min(6, Number(this.teamCount.value) || 3));
+      setup.querySelectorAll('.add-team-button').forEach(button => { button.disabled = Number(this.teamCount.value) >= 4; });
+      for (let i = 0; i < 6; i++) {
+        const row = this.teamRows.children[i];
+        row.hidden = i >= Math.max(2, Math.min(4, Number(this.teamCount.value) || 2));
+        row.querySelector('.remove-team-button').hidden = i < 2;
+      }
     };
     this.teamCount.addEventListener('input', syncTeamRows);
+    setup.querySelectorAll('.add-team-button').forEach(button => button.addEventListener('click', () => {
+      this.teamCount.value = String(Math.min(4, Number(this.teamCount.value || 2) + 1));
+      syncTeamRows();
+    }));
+    this.teamRows.addEventListener('click', event => {
+      const wormButton = event.target.closest('.worm-step-button');
+      if (wormButton) {
+        const row = wormButton.closest('.team-row');
+        const worms = Math.max(1, Math.min(5, Number(row.dataset.worms || 1) + Number(wormButton.dataset.step)));
+        row.dataset.worms = String(worms);
+        row.querySelector('.worm-count-value').textContent = String(worms);
+        return;
+      }
+      const button = event.target.closest('.remove-team-button');
+      if (!button || Number(this.teamCount.value) <= 2) return;
+      this.teamCount.value = String(Number(this.teamCount.value) - 1);
+      syncTeamRows();
+    });
+    setup.querySelector('.setup-random-map').addEventListener('click', () => {
+      setup.querySelector('input[name="mapSource"][value="custom"]').checked = true;
+      fileInput.style.display = 'none';
+    });
 
     const launchTraining = weapon => {
       this.gameMode = 'training';
@@ -1741,26 +2011,31 @@ export class Game {
         if (button.dataset.mode === 'training') {
           modeSelect.hidden = true;
           trainingSelect.hidden = false;
+          if (startSubtitle) startSubtitle.hidden = true;
+        } else if (button.dataset.mode === 'settings') {
+          const controls = document.querySelector('.global-controls');
+          controls.hidden = !controls.hidden;
         } else {
           this.gameMode = 'quick';
           this.trainingWeapon = null;
+          if (startSubtitle) startSubtitle.hidden = true;
           modeSelect.hidden = true;
           setup.hidden = false;
+          setup.querySelector('.setup-actions').append(start);
           start.hidden = false;
-          start.textContent = 'Начать быстрый матч';
+          start.textContent = 'Начать матч';
         }
       });
     }
-    for (const button of trainingGrid.querySelectorAll('[data-weapon]')) {
-      button.addEventListener('click', () => launchTraining(button.dataset.weapon));
-    }
     trainingSelect.querySelector('.training-back').addEventListener('click', () => {
       trainingSelect.hidden = true;
+      if (startSubtitle) startSubtitle.hidden = false;
       modeSelect.hidden = false;
     });
     setup.querySelector('.setup-back').addEventListener('click', () => {
       setup.hidden = true;
       start.hidden = true;
+      if (startSubtitle) startSubtitle.hidden = false;
       modeSelect.hidden = false;
     });
 
@@ -1771,7 +2046,7 @@ export class Game {
     this.matchHud = document.createElement('section');
     this.matchHud.className = 'match-hud';
     this.matchHud.hidden = true;
-    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · A/D — ходить · W — прыжок · дважды W — сальто назад · мышь / ↑↓ — прицел · пробел / ЛКМ — огонь · 1–5 — запал</p>';
+    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><label class="lighting-test-control"><span>Свет</span><select aria-label="Режим освещения карты"><option value="soft">Мягкий</option><option value="flashlight">Фонарик</option><option value="contour">Контуры</option><option value="warm">Тёплый</option><option value="neon">Неон</option></select></label><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · A/D — ходить · W — прыжок · дважды W — сальто назад · мышь / ↑↓ — прицел · пробел / ЛКМ — огонь · 1–5 — запал</p>';
     this.weaponPanel = new WeaponPanel(this, this.matchHud.querySelector('.arsenal-toggle'));
 
     const hint = document.createElement('p');
@@ -1805,6 +2080,11 @@ export class Game {
     this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
+    this.lightingModeSelect = this.matchHud.querySelector('.lighting-test-control select');
+    this.lightingModeSelect.addEventListener('change', () => {
+      this.lightingMode = this.lightingModeSelect.value;
+      this.terrain?.setLightingMode(this.lightingMode);
+    });
 
     this.matchHud.querySelector('.restart-match').addEventListener('click', () => {
       this.pause();
@@ -1817,12 +2097,17 @@ export class Game {
       setup.hidden = true;
       start.hidden = true;
       modeSelect.hidden = false;
+      if (startSubtitle) startSubtitle.hidden = false;
       document.querySelector('#start-screen').hidden = false;
       document.querySelector('#start-screen').classList.add('overlay--visible');
     });
 
     // При клике на "Старт" обновляем мир под выбранный режим карты
-    start.addEventListener('click', () => {
+    start.addEventListener('click', async () => {
+      const mapSource = document.querySelector('input[name="mapSource"]:checked')?.value;
+      if (this.gameMode !== 'training' && mapSource === 'custom' && this.selectedMapImage) {
+        await this.mapImageReady[this.selectedMapIndex];
+      }
       this.configure();
       this.start();
     });
@@ -1834,7 +2119,8 @@ export class Game {
     const botThinking = this.teams[t.team]?.bot && t.state === TURN.WAITING_INPUT && this.bot.elapsed < 2;
     const turnState = botThinking ? 'ДУМАЕТ…' : t.state;
     const trainingProgress = this.targetTrainingActive ? `Мишень ${Math.min(this.targetTrainingStage + 1, 3)}/3 · ` : '';
-    const text = this.winner || `${trainingProgress}${this.teams[t.team].name} · ${this.trainingFreePractice ? '∞' : Math.ceil(t.remaining)} с · ${turnState} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
+    const turnTime = Number.isFinite(t.remaining) ? `${Math.ceil(t.remaining)} с` : '∞';
+    const text = this.winner || `${trainingProgress}${this.teams[t.team].name} · ${turnTime} · ${turnState} · Ветер ${this.wind >= 0 ? '→' : '←'} ${Math.abs(this.wind).toFixed(1)} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
     const hints = { girder: 'Прицел — угол; ЛКМ — поставить в свободном месте', girderPack: 'ЛКМ — поставить балку; за ход можно поставить пять', mbBomb: 'ЛКМ — сбросить бомбу сверху', holy: 'Удерживайте пробел — сила броска; взрыв после 3 секунд и остановки', moleBomb: 'Пробел — выпустить, затем начать бурение, затем взорвать', skunk: 'Пробел — выпустить; ещё раз — выпустить газ', salvation: 'Пробел — выпустить; ещё раз — взорвать', superBanana: 'Пробел — бросить; затем разделить; затем взорвать осколки', homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель; пробел — выпустить голубя', magicBullet: 'ЛКМ — выбрать цель; пробел — выпустить волшебную пулю', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'Пробел — поднять воду и заразить незамороженных бойцов', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: '1–5 — размер стада; пробел — выпустить в выбранном направлении', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'Пробел — метеоритный дождь по всей карте', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'Прицел + пробел — зацепиться; A/D — качаться; W/S — длина; пробел — отпустить', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить, затем взлететь, затем взорвать; A/D или ←/→ — поворот', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Пробел — включить/снять; W/↑ — тяга вверх, A/D — в стороны; Enter — сбросить оружие', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
     const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте пробел / ЛКМ для силы выстрела' : 'Пробел / ЛКМ — применить оружие');
     if (this.weaponHint.textContent !== hint) this.weaponHint.textContent = hint;
