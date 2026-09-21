@@ -122,9 +122,9 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
+    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.cameraPan = { x: 0, y: 0 }; this.touchPointers = new Map(); this.touchGesture = null; this.mobileControls = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
-    this.inMenu = true; this.installUI(); this.bindInput();
+    this.inMenu = true; this.installUI(); this.installMobileControls(); this.bindInput();
   }
 
 
@@ -650,6 +650,8 @@ export class Game {
     }
 
     this.camera.position.set(48, 27, 100);
+    this.cameraPan.x = 0;
+    this.cameraPan.y = 0;
     this.zoom = 1.2;
 
     if (!this.aim) {
@@ -1046,8 +1048,8 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHudCollapsed = true; this.matchHud.hidden = true; this.matchHudToggle.hidden = false; this.matchHudToggle.textContent = 'Панель'; this.matchHudToggle.setAttribute('aria-expanded', 'false'); this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
-  pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
+  start() { if (this.world) { this.inMenu = false; this.matchHudCollapsed = true; this.matchHud.hidden = true; this.matchHudToggle.hidden = false; this.matchHudToggle.textContent = 'Панель'; this.matchHudToggle.setAttribute('aria-expanded', 'false'); this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; if (this.mobileControls) this.mobileControls.hidden = false; this.loop.start(); } }
+  pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.mobileControls) this.mobileControls.hidden = true; if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
   humanInput() { return this.running && !this.winner && this.active?.alive && !this.teams[this.turn.team].bot; }
@@ -1432,6 +1434,7 @@ export class Game {
     this.earthquakeShakeX = 0;
     this.earthquakeShakeY = 0;
     const target = this.cameraFocus || this.weapons.projectile || this.active;
+    const cameraPan = this.cameraFocus || this.weapons.projectile ? { x: 0, y: 0 } : this.cameraPan;
     const smoothing = 1 - Math.exp(-5 * dt);
     this.camera.zoom += (this.zoom - this.camera.zoom) * smoothing;
     this.camera.updateProjectionMatrix();
@@ -1439,8 +1442,8 @@ export class Game {
     const halfW = (this.camera.right - this.camera.left) / 2 / this.camera.zoom,
       halfH = (this.camera.top - this.camera.bottom) / 2 / this.camera.zoom;
     if (target) {
-      const x = halfW >= MAP.width / 2 ? MAP.width / 2 : THREE.MathUtils.clamp(target.x, halfW, MAP.width - halfW),
-        y = halfH >= MAP.height / 2 ? MAP.height / 2 : THREE.MathUtils.clamp(target.y, halfH, MAP.height - halfH);
+      const x = halfW >= MAP.width / 2 ? MAP.width / 2 : THREE.MathUtils.clamp(target.x + cameraPan.x, halfW, MAP.width - halfW),
+        y = halfH >= MAP.height / 2 ? MAP.height / 2 : THREE.MathUtils.clamp(target.y + cameraPan.y, halfH, MAP.height - halfH);
       this.camera.position.x += (x - this.camera.position.x) * smoothing;
       this.camera.position.y += (y - this.camera.position.y) * smoothing;
       if (this.cameraFocus && !this.cameraFocus.supplyCrate && !this.cameraFocus.drowningFocus && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
@@ -1689,6 +1692,103 @@ export class Game {
     this.renderer.setSize(width, height, false);
   }
 
+  installMobileControls() {
+    const controls = document.createElement('div');
+    controls.className = 'mobile-controls';
+    controls.hidden = true;
+    controls.innerHTML = [
+      '<div class="mobile-control-group mobile-movement" aria-label="Передвижение">',
+      '  <button type="button" data-key="KeyA" aria-label="Идти влево">◀</button>',
+      '  <button type="button" data-key="KeyD" aria-label="Идти вправо">▶</button>',
+      '  <button type="button" data-action="jump" aria-label="Прыгнуть">↟</button>',
+      '</div>',
+      '<div class="mobile-control-group mobile-camera" aria-label="Камера">',
+      '  <button type="button" data-camera="panUp" aria-label="Камера вверх">▲</button>',
+      '  <button type="button" data-camera="panLeft" aria-label="Камера влево">◀</button>',
+      '  <button type="button" data-camera="reset" aria-label="Центрировать камеру">●</button>',
+      '  <button type="button" data-camera="panRight" aria-label="Камера вправо">▶</button>',
+      '  <button type="button" data-camera="panDown" aria-label="Камера вниз">▼</button>',
+      '  <button type="button" data-camera="zoomOut" aria-label="Уменьшить">−</button>',
+      '  <button type="button" data-camera="zoomIn" aria-label="Увеличить">+</button>',
+      '</div>',
+      '<div class="mobile-control-group mobile-action" aria-label="Прицел и огонь">',
+      '  <button type="button" data-key="ArrowUp" aria-label="Поднять угол">⌃</button>',
+      '  <button type="button" data-key="ArrowDown" aria-label="Опустить угол">⌄</button>',
+      '  <button type="button" class="mobile-fire" data-action="fire" aria-label="Огонь">ОГОНЬ</button>',
+      '</div>',
+      '<div class="mobile-gesture-hint">Два пальца — двигать камеру и менять масштаб</div>'
+    ].join('');
+    document.querySelector('#game-root').append(controls);
+    this.mobileControls = controls;
+
+    const cameraStep = 7;
+    const pressKey = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const key = event.currentTarget.dataset.key;
+      if (!this.humanInput() || !key) return;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      this.keys.add(key);
+      if (key === 'KeyW') {
+        const activeWorm = this.active;
+        if (activeWorm && this.time - activeWorm.jumpTapTime <= .38) activeWorm.backflipRequested = true;
+        if (activeWorm) activeWorm.jumpTapTime = this.time;
+      }
+    };
+    const releaseKey = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      const key = event.currentTarget.dataset.key;
+      if (key) this.keys.delete(key);
+    };
+    controls.querySelectorAll('[data-key]').forEach(button => {
+      button.addEventListener('pointerdown', pressKey);
+      button.addEventListener('pointerup', releaseKey);
+      button.addEventListener('pointercancel', releaseKey);
+      button.addEventListener('lostpointercapture', releaseKey);
+    });
+
+    const pressAction = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!this.humanInput()) return;
+      const action = event.currentTarget.dataset.action;
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+      if (action === 'jump') {
+        this.keys.add('KeyW');
+        const activeWorm = this.active;
+        if (activeWorm && this.time - activeWorm.jumpTapTime <= .38) activeWorm.backflipRequested = true;
+        if (activeWorm) activeWorm.jumpTapTime = this.time;
+      }
+      if (action === 'fire' && !this.weapons.remote()) this.turn.beginCharge();
+    };
+    const releaseAction = event => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (event.currentTarget.dataset.action === 'fire' && this.humanInput()) this.turn.release();
+    };
+    controls.querySelectorAll('[data-action]').forEach(button => {
+      button.addEventListener('pointerdown', pressAction);
+      button.addEventListener('pointerup', releaseAction);
+      button.addEventListener('pointercancel', releaseAction);
+      button.addEventListener('lostpointercapture', releaseAction);
+    });
+
+    controls.querySelectorAll('[data-camera]').forEach(button => {
+      button.addEventListener('pointerdown', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const action = event.currentTarget.dataset.camera;
+        if (action === 'panLeft') this.cameraPan.x -= cameraStep;
+        if (action === 'panRight') this.cameraPan.x += cameraStep;
+        if (action === 'panUp') this.cameraPan.y += cameraStep;
+        if (action === 'panDown') this.cameraPan.y -= cameraStep;
+        if (action === 'zoomIn') this.zoom = THREE.MathUtils.clamp(this.zoom * 1.18, 1, 3);
+        if (action === 'zoomOut') this.zoom = THREE.MathUtils.clamp(this.zoom / 1.18, 1, 3);
+        if (action === 'reset') { this.cameraPan.x = 0; this.cameraPan.y = 0; this.zoom = 1.2; this.cameraFocus = null; }
+      });
+    });
+  }
   bindInput() {
     this.canvas.addEventListener('contextmenu', e => { e.preventDefault(); this.weaponPanel.flip(); });
     window.addEventListener('keydown', e => {
@@ -1724,16 +1824,51 @@ export class Game {
       }
     });
     this.canvas.addEventListener('pointermove', e => {
+      if (e.pointerType === 'touch' && this.touchPointers.has(e.pointerId)) {
+        this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this.touchPointers.size >= 2 && this.touchGesture) {
+          e.preventDefault();
+          const points = [...this.touchPointers.values()];
+          const firstPoint = points[0];
+          const secondPoint = points[1];
+          const midpointX = (firstPoint.x + secondPoint.x) / 2;
+          const midpointY = (firstPoint.y + secondPoint.y) / 2;
+          const distance = Math.hypot(secondPoint.x - firstPoint.x, secondPoint.y - firstPoint.y);
+          const rect = this.canvas.getBoundingClientRect();
+          const viewWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
+          const viewHeight = (this.camera.top - this.camera.bottom) / this.camera.zoom;
+          this.cameraPan.x = this.touchGesture.startPan.x - (midpointX - this.touchGesture.startMidpoint.x) * viewWidth / rect.width;
+          this.cameraPan.y = this.touchGesture.startPan.y - (midpointY - this.touchGesture.startMidpoint.y) * viewHeight / rect.height;
+          this.zoom = THREE.MathUtils.clamp(this.touchGesture.startZoom * distance / this.touchGesture.startDistance, 1, 3);
+          return;
+        }
+      }
       const rect = this.canvas.getBoundingClientRect();
       this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
       if (!this.humanInput() || this.weaponPanel.open || this.turnIntroTime > 0) return;
       if (!NO_AIM_WEAPONS.has(this.turn.weapon) && (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || this.weapons.flame)) {
         this.angle = Math.atan2(this.vector.y - this.active.y, this.vector.x - this.active.x);
         this.active.facing = Math.cos(this.angle) < 0 ? -1 : 1;
-        this.activeMoved = true; // <-- Мышь сдвинулась для прицела — плашка исчезает
+        this.activeMoved = true;
       }
     });
     this.canvas.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'touch') {
+        this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this.touchPointers.size >= 2) {
+          this.turn?.cancelCharge();
+          const points = [...this.touchPointers.values()];
+          const firstPoint = points[0];
+          const secondPoint = points[1];
+          this.touchGesture = {
+            startDistance: Math.max(1, Math.hypot(secondPoint.x - firstPoint.x, secondPoint.y - firstPoint.y)),
+            startMidpoint: { x: (firstPoint.x + secondPoint.x) / 2, y: (firstPoint.y + secondPoint.y) / 2 },
+            startPan: { x: this.cameraPan.x, y: this.cameraPan.y },
+            startZoom: this.zoom
+          };
+          return;
+        }
+      }
       if (e.button === 0 && this.weaponPanel.open) { this.weaponPanel.close(); return; }
       if (e.button === 0 && this.humanInput()) {
         this.canvas.setPointerCapture(e.pointerId);
@@ -1748,9 +1883,19 @@ export class Game {
       }
     });
     this.canvas.addEventListener('pointerup', e => {
+      if (e.pointerType === 'touch') {
+        const hadGesture = Boolean(this.touchGesture);
+        this.touchPointers.delete(e.pointerId);
+        if (this.touchPointers.size < 2) this.touchGesture = null;
+        if (hadGesture || this.touchPointers.size > 0) return;
+      }
       if (e.button === 0 && this.humanInput()) this.turn.release();
     });
-    this.canvas.addEventListener('pointercancel', () => {
+    this.canvas.addEventListener('pointercancel', e => {
+      if (e.pointerType === 'touch') {
+        this.touchPointers.delete(e.pointerId);
+        this.touchGesture = null;
+      }
       this.turn?.cancelCharge();
     });
     this.canvas.addEventListener('wheel', e => {
