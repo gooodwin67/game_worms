@@ -2825,3 +2825,19 @@ button {
     transform: translateX(-50%) scale(.9);
   }
 }
+
+/* Keep the mobile battle view clear: actions remain, informational HUD does not. */
+@media (pointer: coarse), (max-width: 700px) {
+  #hud,
+  .match-hud,
+  .match-hud-toggle,
+  .team-health-hud,
+  .audio-test-hud,
+  .worm-labels,
+  .turn-announcement,
+  .weapon-panel,
+  .mobile-camera,
+  .mobile-gesture-hint {
+    display: none !important;
+  }
+}
