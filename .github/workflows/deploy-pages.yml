@@ -3,7 +3,7 @@ name: Deploy game_worms to GitHub Pages
 on:
   push:
     branches:
-      - master
+      - develop
   workflow_dispatch:
 
 permissions:
