@@ -17,6 +17,40 @@ export class App {
     this.state = normalizeState();
     this.saveTimer = 0;
     this.started = false;
+    this.game.getTrainingProfile = () => ({
+      loadout: [...this.state.trainingLoadout],
+      completedMissions: [...this.state.completedTrainingMissions],
+      weaponPackOwned: this.state.trainingWeaponPackOwned,
+    });
+    this.game.saveTrainingLoadout = weapons => {
+      this.state.trainingLoadout = [...new Set(weapons)];
+      void this.saveState();
+    };
+    this.game.onTrainingMissionComplete = missionId => this.completeTrainingMission(missionId);
+    this.game.purchaseTrainingWeaponPack = () => this.purchaseTrainingWeaponPack();
+  }
+
+  completeTrainingMission(missionId) {
+    if (!['bazooka', 'grenade'].includes(missionId)) return;
+    if (!this.state.completedTrainingMissions.includes(missionId)) {
+      this.state.completedTrainingMissions.push(missionId);
+      void this.saveState({ flush: true });
+    }
+  }
+
+  async purchaseTrainingWeaponPack() {
+    const productId = GAME_CONFIG.productIds.trainingWeaponPack;
+    if (!productId || productId.startsWith('REPLACE_WITH')) return { unconfigured: true };
+    try {
+      const purchase = await this.sdk.purchase(productId, 'trainingWeaponPack');
+      if (!purchase) return { cancelled: true };
+      this.state.trainingWeaponPackOwned = true;
+      await this.saveState({ flush: true });
+      return { success: true };
+    } catch (error) {
+      console.warn('Training weapon pack purchase failed.', error);
+      return { cancelled: true };
+    }
   }
 
   async init() {

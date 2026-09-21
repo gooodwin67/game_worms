@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import RAPIER from '@dimforge/rapier2d-compat';
 import { GameLoop, TurnMachine, TURN, MAP, GRAVITY, COLORS, FIXED_DT } from './core.js';
 import { Terrain } from './terrain.js';
+import { Water } from './water.js';
 import { ExplosionParticles } from './particles.js';
 import { Weapons, Bot, ARSENAL, UNLIMITED_WEAPONS } from './weapons.js';
 import { WeaponPanel } from './weapon-panel.js';
@@ -30,6 +31,21 @@ const TRAINING_SCENARIOS = Object.freeze({
   airstrike: { map: 'target', mode: 'sequential', indestructible: true, order: [1, 0, 2] },
   ninjaRope: { map: 'open', mode: 'free', indestructible: true }
 });
+const TRAINING_BASE_WEAPONS = ['bazooka', 'grenade'];
+const TRAINING_REWARD_WEAPONS = Object.keys(ARSENAL).filter(id => !TRAINING_BASE_WEAPONS.includes(id));
+const TRAINING_MISSION_REWARDS = Object.freeze({
+  bazooka: TRAINING_REWARD_WEAPONS.filter((_, index) => index % 2 === 0),
+  grenade: TRAINING_REWARD_WEAPONS.filter((_, index) => index % 2 === 1)
+});
+
+function unlockedTrainingWeapons(profile = {}) {
+  const unlocked = new Set(TRAINING_BASE_WEAPONS);
+  for (const [missionId, rewards] of Object.entries(TRAINING_MISSION_REWARDS)) {
+    if (profile.completedMissions?.includes(missionId)) rewards.forEach(id => unlocked.add(id));
+  }
+  if (profile.weaponPackOwned) Object.keys(ARSENAL).forEach(id => unlocked.add(id));
+  return unlocked;
+}
 
 // Зафиксированные параметры утки
 const DUCK_PARAMS = {
@@ -375,11 +391,12 @@ export class Game {
       this.weapons.dispose();
       for (const crate of this.supplyCrates || []) crate.dispose();
       this.supplyCrates = [];
-      if (this.water) { this.water.removeFromParent(); this.water.geometry.dispose(); this.water.material.dispose(); }
+      this.water?.dispose();
       for (const w of this.worms) {
         disposeWeaponMesh(w.duck.weaponMesh);
         w.duck.dispose();
         w.label.remove();
+        w.drowningDamagePopup?.remove();
       }
       this.events.free();
       this.world.free();
@@ -391,6 +408,13 @@ export class Game {
     // У каждой тренировки свой полигон: цели нужны только там, где они являются частью упражнения.
     this.trainingScenario = this.gameMode === 'training' ? TRAINING_SCENARIOS[this.trainingWeapon] : null;
     this.trainingFreePractice = this.trainingWeapon === 'free';
+    const trainingProfile = this.getTrainingProfile?.() || {};
+    const selectedTrainingWeapons = this.trainingLoadoutSelection || trainingProfile.loadout || ['bazooka'];
+    const unlockedWeapons = unlockedTrainingWeapons(trainingProfile);
+    this.trainingLoadout = new Set(this.trainingFreePractice
+      ? selectedTrainingWeapons.filter(id => unlockedWeapons.has(id))
+      : []);
+    if (this.trainingFreePractice && this.trainingLoadout.size === 0) this.trainingLoadout.add('bazooka');
     this.turnTimeLimit = Number(document.querySelector('#turn-time-limit')?.value || 0);
     this.weaponCrateFrequency = Number(document.querySelector('#weapon-crate-count')?.value || 5);
     this.windEnabled = document.querySelector('#wind-enabled')?.value !== 'no';
@@ -439,60 +463,7 @@ export class Game {
     }
     this.baseWaterSurface = Math.max(3.8, this.terrain.lowestSolidY() + 3);
     this.waterBottom = -6;
-    const initialWaterHeight = this.baseWaterSurface - this.waterBottom;
-    const waterMaterial = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: { value: 0 },
-        uVerticalScale: { value: initialWaterHeight },
-        uColorDeep: { value: new THREE.Color('#0d324a') },
-        uColorShallow: { value: new THREE.Color('#2a7b9e') },
-        uColorFoam: { value: new THREE.Color('#88d4f2') }
-      },
-      vertexShader: `
-        uniform float uTime;
-        uniform float uVerticalScale;
-        varying vec2 vUv;
-        varying float vWave;
-
-        void main() {
-          vec3 pos = position;
-          float wave = sin(pos.x * .42 + uTime * 1.35) * .12
-            + cos(pos.x * .22 - uTime * .85) * .08
-            + sin(pos.x * .91 + uTime * 1.8) * .035;
-          float surface = smoothstep(.18, .5, position.y);
-          pos.y += wave * surface / max(uVerticalScale, 1.0);
-          vUv = uv;
-          vWave = wave;
-          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
-        }
-      `,
-      fragmentShader: `
-        uniform float uTime;
-        uniform vec3 uColorDeep;
-        uniform vec3 uColorShallow;
-        uniform vec3 uColorFoam;
-        varying vec2 vUv;
-        varying float vWave;
-
-        void main() {
-          float depth = smoothstep(0.0, 1.0, vUv.y);
-          vec3 waterColor = mix(uColorDeep, uColorShallow, depth);
-          float foam = smoothstep(.06, .16, vWave) * smoothstep(.72, 1.0, vUv.y);
-          float glint = pow(max(0.0, sin(vUv.x * 70.0 + uTime * 3.0)), 18.0) * .12 * smoothstep(.55, 1.0, vUv.y);
-          waterColor = mix(waterColor, uColorFoam, foam * .78);
-          waterColor += vec3(glint);
-          gl_FragColor = vec4(waterColor, .92);
-        }
-      `,
-      transparent: true,
-      depthWrite: false,
-      side: THREE.DoubleSide
-    });
-    this.water = new THREE.Mesh(new THREE.PlaneGeometry(MAP.width, 1, 128, 4), waterMaterial);
-    this.water.scale.y = initialWaterHeight;
-    this.water.position.set(MAP.width / 2, this.waterBottom + initialWaterHeight / 2, -.05);
-    this.water.visible = true;
-    this.scene.add(this.water);
+    this.water = new Water(this.scene, this.waterBottom, this.baseWaterSurface);
     this.particles = new ExplosionParticles(this.scene);
     this.weapons = new Weapons(this);
     this.bot = new Bot(this);
@@ -802,12 +773,16 @@ export class Game {
   }
 
   weaponCount(type, teamIndex = this.turn?.team) {
-    if (this.trainingFreePractice) return Infinity;
+    if (this.gameMode === 'training') {
+      if (this.trainingFreePractice) return this.trainingLoadout?.has(type) ? Infinity : 0;
+      return type === this.trainingWeapon ? Infinity : 0;
+    }
     if (UNLIMITED_WEAPONS.has(type)) return Infinity;
     return this.teams[teamIndex]?.inventory?.[type] ?? 0;
   }
 
   canUseWeapon(type, teamIndex = this.turn?.team) {
+    if (this.trainingFreePractice) return this.trainingLoadout?.has(type) || false;
     return this.gameMode === 'training' || this.weaponCount(type, teamIndex) > 0;
   }
 
@@ -862,6 +837,7 @@ export class Game {
 
   spawnSupplyCrate() {
     if (this.gameMode !== 'quick') return;
+    this.showSupplyDropAnnouncement();
     this.audio?.play('supplyCrateDrop');
     let x = MAP.width / 2;
     let bestDistance = -Infinity;
@@ -889,6 +865,7 @@ export class Game {
       const crate = this.supplyCrates[index];
       const p = crate.body.translation();
       crate.dropTime += dt;
+      const previousY = crate.y;
       crate.x = p.x;
       crate.y = p.y;
       if (!crate.landed && !crate.parachuteReleased) {
@@ -903,6 +880,11 @@ export class Game {
       const currentPosition = crate.body.translation();
       crate.visual.root.position.set(currentPosition.x, currentPosition.y, .35);
       crate.visual.root.rotation.z = crate.body.rotation();
+      const waterSurface = this.water?.getHeightAt(currentPosition.x) ?? this.baseWaterSurface + this.waterLevel;
+      if (!crate.inWater && previousY > waterSurface && currentPosition.y <= waterSurface) {
+        crate.inWater = true;
+        this.water?.splashAt(currentPosition.x, Math.max(Math.abs(crate.body.linvel().y), 1), 2.6);
+      }
       const landingHeights = [-.85, -.42, 0, .42, .85].map(offset => this.terrain.landingHeight(currentPosition.x + offset, .08, .55)).filter(value => value !== null);
       const landingY = landingHeights.length ? Math.max(...landingHeights) : null;
       const velocity = crate.body.linvel();
@@ -958,7 +940,61 @@ export class Game {
     });
   }
 
+  showTurnAnnouncement(teamIndex) {
+    const team = this.teams[teamIndex];
+    if (!team || !this.turnAnnouncement) return;
+    const phrases = ['Ваш выход!', 'Пора атаковать!', 'Покажите класс!', 'Не зевайте!'];
+    const phrase = phrases[Math.floor(Math.random() * phrases.length)];
+    this.showFloatingAnnouncement(`Ход: ${team.name}`, phrase);
+  }
+
+  showSupplyDropAnnouncement() {
+    this.showFloatingAnnouncement('Ловите оружие!', 'Ящик припасов падает с неба');
+  }
+
+  showFloatingAnnouncement(title, subtitle) {
+    if (!this.turnAnnouncement) return;
+    this.turnAnnouncement.querySelector('.turn-banner-panel strong').textContent = title;
+    this.turnAnnouncement.querySelector('.turn-banner-panel > span:not(.turn-banner-emblem)').textContent = subtitle;
+    this.turnAnnouncement.classList.remove('turn-announcement--show');
+    void this.turnAnnouncement.offsetWidth;
+    this.turnAnnouncement.classList.add('turn-announcement--show');
+  }
+
   createExplosion(x, y, radius) { this.audio?.play('explosion'); this.weapons?.detonateSupplyCrates?.(x, y, radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
+  startDrowning(w) {
+    if (!w.alive || this.trainingFreePractice) return;
+    const remainingHp = Math.max(0, Math.ceil(w.hp));
+    w.hp = 0;
+    w.pendingHp = 0;
+    w.health.title = '0 HP';
+    w.alive = false;
+    w.state = 'drowning';
+    w.label.hidden = true;
+    this.wormByCollider.delete(w.collider.handle);
+    w.drowningTime = 0;
+    w.drowningStartY = w.y;
+    w.drowningStartX = w.x;
+    w.drowningSurfaceY = this.water?.getHeightAt(w.x) ?? this.baseWaterSurface + this.waterLevel;
+    w.drowningDuration = 12;
+    w.drowningDistance = MAP.height + 12;
+    w.drowningDiveDuration = .24;
+    w.drowningDiveDistance = 2;
+    w.drowningBubbleTimer = 0;
+    w.drowningDamagePopup = document.createElement('strong');
+    w.drowningDamagePopup.className = 'drowning-damage-popup';
+    w.drowningDamagePopup.textContent = `-${remainingHp}`;
+    this.labels.append(w.drowningDamagePopup);
+    this.damageDisplayTime = Math.max(this.damageDisplayTime, 2.2);
+    w.body.setLinvel({ x: 0, y: 0 }, true);
+    w.body.setAngvel(0, true);
+    w.body.setGravityScale(0, true);
+    w.body.sleep();
+    w.mesh.visible = true;
+    if (w.duck.eyeGroup) w.duck.eyeGroup.scale.y = .12;
+    this.cameraFocus = { x: w.x, y: w.drowningSurfaceY, drowningFocus: true };
+  }
+
   damage(w, amount, force = false, impact = true) {
     if (!w.alive || (w.frozen && !force)) return;
     const previousHp = w.hp;
@@ -1010,7 +1046,7 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHud.hidden = false; this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
+  start() { if (this.world) { this.inMenu = false; this.matchHudCollapsed = true; this.matchHud.hidden = true; this.matchHudToggle.hidden = false; this.matchHudToggle.textContent = 'Панель'; this.matchHudToggle.setAttribute('aria-expanded', 'false'); this.teamHealthHud.hidden = false; this.audioTestHud.hidden = false; this.labels.hidden = false; this.loop.start(); } }
   pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
@@ -1018,7 +1054,7 @@ export class Game {
 
   update(dt) {
     this.time += dt;
-    if (this.water?.material?.uniforms?.uTime) this.water.material.uniforms.uTime.value = this.time;
+    this.water?.update(dt, this.baseWaterSurface + this.waterLevel);
     this.earthquakeShake = Math.max(0, this.earthquakeShake - dt);
     this.damageDisplayTime = Math.max(0, this.damageDisplayTime - dt);
     this.turnIntroTime = Math.max(0, this.turnIntroTime - dt);
@@ -1180,7 +1216,14 @@ export class Game {
         w.impactSpinDirection = Math.abs(horizontalImpulse) > .05 ? -Math.sign(horizontalImpulse) : -w.facing;
       }
       if (w.y < -3 || w.x < -3 || w.x > MAP.width + 3) { this.damage(w, w.hp, true); continue; }
-      if (w.y - .45 < this.baseWaterSurface + this.waterLevel) { this.damage(w, w.hp, true); continue; }
+      const waterSurface = this.water?.getHeightAt(w.x) ?? this.baseWaterSurface + this.waterLevel;
+      if (w.y - .45 < waterSurface) {
+        if (!w.inWater) this.water?.splashAt(w.x, Math.max(Math.abs(w.vy), 1.1), 2.2);
+        w.inWater = true;
+        if (!this.trainingFreePractice) this.startDrowning(w);
+        continue;
+      }
+      w.inWater = false;
       if (w.body.isSleeping()) continue;
 
       w.grounded = false; w.groundNormalX = 0; w.groundNormalY = 1;
@@ -1242,6 +1285,32 @@ export class Game {
       }
       w.state = w.grounded ? 'alive' : 'airborne';
     }
+    for (const w of this.worms) if (!w.alive && w.state === 'drowning') {
+      w.drowningTime += dt;
+      const progress = THREE.MathUtils.clamp(w.drowningTime / w.drowningDuration, 0, 1);
+      const diveProgress = THREE.MathUtils.clamp(w.drowningTime / w.drowningDiveDuration, 0, 1);
+      const slowProgress = THREE.MathUtils.clamp((w.drowningTime - w.drowningDiveDuration) / (w.drowningDuration - w.drowningDiveDuration), 0, 1);
+      const remainingDistance = w.drowningDistance - w.drowningDiveDistance;
+      const slowShape = slowProgress * slowProgress * (3 - 2 * slowProgress);
+      const sinkDistance = w.drowningDiveDistance * diveProgress + remainingDistance * slowShape;
+      w.mesh.position.set(w.drowningStartX, w.drowningStartY - sinkDistance, 0);
+      w.mesh.rotation.z = Math.sin(w.drowningTime * 2.4) * .045 * (1 - progress);
+      w.drowningBubbleTimer -= dt;
+      if (w.drowningBubbleTimer <= 0 && progress < 1) {
+        this.water?.emitBubbles(w.mesh.position.x, w.mesh.position.y + .28, 8);
+        w.drowningBubbleTimer = .1;
+      }
+      if (w.drowningDamagePopup) {
+        const fade = THREE.MathUtils.clamp(1 - w.drowningTime / 2.2, 0, 1);
+        w.drowningDamagePopup.style.opacity = String(fade);
+        if (fade <= 0) {
+          w.drowningDamagePopup.remove();
+          w.drowningDamagePopup = null;
+        }
+      }
+      if (progress >= 1 && this.cameraFocus?.drowningFocus) this.cameraFocus = null;
+    }
+
     for (const w of this.worms) if (!w.alive && w.state === 'dead') {
       w.previousX = w.x; w.previousY = w.y;
       const previousVx = w.vx, previousVy = w.vy;
@@ -1306,7 +1375,11 @@ export class Game {
   advanceTargetTraining(target) {
     if (!this.targetTrainingActive) return false;
     const nextStage = this.targetTrainingStage + 1;
-    if (nextStage >= this.targetTrainingTargets.length) return false;
+    if (nextStage >= this.targetTrainingTargets.length) {
+      this.onTrainingMissionComplete?.(this.trainingWeapon);
+      this.showFloatingAnnouncement('Миссия пройдена!', 'Новое оружие разблокировано');
+      return false;
+    }
     this.targetTrainingStage = nextStage;
     const position = this.targetTrainingTargets[nextStage];
     target.hp = 40;
@@ -1370,7 +1443,7 @@ export class Game {
         y = halfH >= MAP.height / 2 ? MAP.height / 2 : THREE.MathUtils.clamp(target.y, halfH, MAP.height - halfH);
       this.camera.position.x += (x - this.camera.position.x) * smoothing;
       this.camera.position.y += (y - this.camera.position.y) * smoothing;
-      if (this.cameraFocus && !this.cameraFocus.supplyCrate && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
+      if (this.cameraFocus && !this.cameraFocus.supplyCrate && !this.cameraFocus.drowningFocus && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
     }
     if (this.earthquakeShake > 0) {
       const strength = Math.min(.88, this.earthquakeShake * 1.5);
@@ -1695,11 +1768,15 @@ export class Game {
     modeSelect.innerHTML = `
       <button type="button" data-mode="training">
         <strong>Тренировка</strong>
-        <span>Свободная тренировка и освоение нового оружия</span>
+        <span>Свободный режим без ограничений</span>
       </button>
       <button type="button" data-mode="quick">
         <strong>Быстрый матч</strong>
         <span>Игра на одном устройстве против игроков и ботов</span>
+      </button>
+      <button type="button" data-mode="missions">
+        <strong>Прохождение миссий</strong>
+        <span>Освойте базуку и гранаты в специальных заданиях</span>
       </button>
       <button type="button" data-mode="settings">
         <strong>Настройки</strong>
@@ -1707,20 +1784,8 @@ export class Game {
       </button>
     `;
     const trainingWeapons = [
-      { id: 'free', title: 'Свободная тренировка', description: 'Открытая карта, бесконечное оружие и удобный режим для практики.' },
       { id: 'bazooka', description: 'Траектория и сила выстрела' },
-      { id: 'shotgun', description: 'Два точных выстрела' },
-      { id: 'longbow', description: 'Прямой выстрел и дальность' },
-      { id: 'homing', description: 'Наведение ракеты на цель' },
-      { id: 'grenade', description: 'Бросок, запал и отскок' },
-      { id: 'dynamite', description: 'Установка заряда и безопасный отход' },
-      { id: 'mine', description: 'Размещение и срабатывание' },
-      { id: 'sheep', description: 'Управляемая овечка и момент взрыва' },
-      { id: 'pigeon', description: 'Выбор цели и точное попадание' },
-      { id: 'airstrike', description: 'Выбор зоны авиаудара' },
-      { id: 'firePunch', description: 'Удар в упор и направление импульса' },
-      { id: 'ninjaRope', description: 'Зацеп, раскачка и отпускание' },
-      { id: 'jetPack', description: 'Управление полётом и посадка' }
+      { id: 'grenade', description: 'Бросок, запал и отскок' }
     ].map(weapon => ({ ...weapon, title: weapon.title || ARSENAL[weapon.id] }));
     const trainingSelect = document.createElement('div');
     trainingSelect.className = 'training-select';
@@ -1728,11 +1793,10 @@ export class Game {
     trainingSelect.innerHTML = `
       <div class="training-select-heading">
         <span class="training-kicker">УТИНАЯ АРТИЛЛЕРИЯ</span>
-        <strong>ТРЕНИРОВКА</strong>
-        <span>Выберите оружие или тип тренировки</span>
+        <strong>ПРОХОЖДЕНИЕ МИССИЙ</strong>
+        <span>Выберите миссию и отточите свои навыки</span>
       </div>
       <div class="training-selection">
-        <button type="button" class="training-feature is-selected" data-weapon="free" aria-pressed="true"></button>
         <div class="training-grid"></div>
       </div>
       <div class="training-actions">
@@ -1740,12 +1804,8 @@ export class Game {
       </div>
     `;
     const trainingGrid = trainingSelect.querySelector('.training-grid');
-    const trainingFeature = trainingSelect.querySelector('.training-feature');
     const arsenalIds = Object.keys(ARSENAL);
-    let selectedTrainingWeapon = 'free';
-    trainingFeature.setAttribute('aria-label', 'Свободная тренировка. Открытая карта, бесконечное оружие и удобный режим для практики.');
-    trainingFeature.innerHTML = '<div class="training-feature-art" aria-hidden="true"><span>∞</span></div><strong>Свободная тренировка</strong><span>Открытая карта, бесконечное оружие и удобный режим для практики.</span>';
-    for (const weapon of trainingWeapons.filter(item => item.id !== 'free')) {
+    for (const weapon of trainingWeapons) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'training-tile';
@@ -1768,18 +1828,118 @@ export class Game {
       }
       trainingGrid.append(button);
     }
-    const selectTrainingWeapon = weapon => {
-      selectedTrainingWeapon = weapon;
-      trainingSelect.querySelectorAll('[data-weapon]').forEach(button => {
-        const selected = button.dataset.weapon === weapon;
-        button.classList.toggle('is-selected', selected);
-        button.setAttribute('aria-pressed', String(selected));
-      });
+    trainingGrid.querySelectorAll('[data-weapon]').forEach(button => button.addEventListener('click', () => launchTraining(button.dataset.weapon)));
+
+    const trainingSettings = document.createElement('div');
+    trainingSettings.className = 'training-select training-settings';
+    trainingSettings.hidden = true;
+    trainingSettings.innerHTML = `
+      <div class="training-select-heading">
+        <span class="training-kicker">СВОБОДНЫЙ РЕЖИМ</span>
+        <strong>НАСТРОЙКА ТРЕНИРОВКИ</strong>
+        <span>Выберите оружие, которое будет доступно без ограничений</span>
+      </div>
+      <p class="training-loadout-note">Базука и гранаты доступны сразу. Остальное оружие можно открыть за миссию или купить набором.</p>
+      <div class="training-grid training-loadout-grid"></div>
+      <p class="training-loadout-status" aria-live="polite"></p>
+      <div class="training-actions">
+        <button type="button" class="training-settings-back">← <span>Назад</span></button>
+        <span class="training-loadout-help">Нажмите на оружие, чтобы добавить его в тренировку или убрать из неё</span>
+        <button type="button" class="training-start">Начать тренировку</button>
+      </div>
+    `;
+    const trainingLoadoutGrid = trainingSettings.querySelector('.training-loadout-grid');
+    const trainingLoadoutStatus = trainingSettings.querySelector('.training-loadout-status');
+    const trainingStartButton = trainingSettings.querySelector('.training-start');
+    let selectedTrainingWeapons = new Set(['bazooka']);
+
+    const renderTrainingLoadout = () => {
+      const profile = this.getTrainingProfile?.() || {};
+      const unlocked = unlockedTrainingWeapons(profile);
+      selectedTrainingWeapons = new Set((profile.loadout || ['bazooka']).filter(id => unlocked.has(id)));
+      if (selectedTrainingWeapons.size === 0) selectedTrainingWeapons.add('bazooka');
+      trainingLoadoutGrid.replaceChildren();
+      for (const id of arsenalIds) {
+        const card = document.createElement('article');
+        const selected = selectedTrainingWeapons.has(id);
+        const isUnlocked = unlocked.has(id);
+        const missionId = Object.entries(TRAINING_MISSION_REWARDS).find(([, rewards]) => rewards.includes(id))?.[0];
+        card.className = `training-loadout-card${selected ? ' is-selected' : ''}${isUnlocked ? '' : ' is-locked'}`;
+        const button = document.createElement('button');
+        const status = selected ? '✓ В наборе' : '+ Добавить';
+        button.type = 'button';
+        button.className = 'training-tile training-loadout-tile';
+        button.dataset.weapon = id;
+        button.setAttribute('aria-label', `${ARSENAL[id]}. ${isUnlocked ? status : 'Заблокировано'}`);
+        button.disabled = !isUnlocked;
+        const index = arsenalIds.indexOf(id);
+        const [x, y, width, height] = WEAPON_ICON_REGIONS[index];
+        button.innerHTML = `
+          <svg class="training-weapon-icon" aria-hidden="true" viewBox="0 0 ${width} ${height}" focusable="false">
+            <svg width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" overflow="hidden">
+              <image href="${import.meta.env.BASE_URL}assets/weapon-atlas.png" width="749" height="2098"></image>
+            </svg>
+          </svg>
+          <strong>${ARSENAL[id]}</strong>
+          ${isUnlocked ? `<span class="training-loadout-action-label">${status}</span>` : ''}
+        `;
+        if (isUnlocked) {
+          button.setAttribute('aria-pressed', String(selected));
+          button.addEventListener('click', () => {
+            if (selectedTrainingWeapons.has(id) && selectedTrainingWeapons.size === 1) {
+              trainingLoadoutStatus.textContent = 'В наборе должно остаться хотя бы одно оружие.';
+              return;
+            }
+            if (selectedTrainingWeapons.has(id)) selectedTrainingWeapons.delete(id);
+            else selectedTrainingWeapons.add(id);
+            this.saveTrainingLoadout?.([...selectedTrainingWeapons]);
+            trainingLoadoutStatus.textContent = '';
+            renderTrainingLoadout();
+          });
+        } else {
+          const actions = document.createElement('div');
+          actions.className = 'training-unlock-actions';
+
+          const missionButton = document.createElement('button');
+          missionButton.type = 'button';
+          missionButton.className = 'training-unlock-button is-mission';
+          missionButton.textContent = 'Миссия';
+          missionButton.setAttribute('aria-label', `Пройти миссию «${ARSENAL[missionId]}», чтобы открыть «${ARSENAL[id]}»`);
+          missionButton.addEventListener('click', () => launchTraining(missionId));
+
+          const purchaseButton = document.createElement('button');
+          purchaseButton.type = 'button';
+          purchaseButton.className = 'training-unlock-button is-purchase';
+          purchaseButton.textContent = 'Купить';
+          purchaseButton.setAttribute('aria-label', `Купить набор оружия, чтобы открыть «${ARSENAL[id]}»`);
+          purchaseButton.addEventListener('click', async () => {
+            trainingLoadoutStatus.textContent = 'Открываю покупку набора оружия…';
+            const result = await this.purchaseTrainingWeaponPack?.();
+            if (result?.success) {
+              trainingLoadoutStatus.textContent = 'Набор оружия открыт!';
+              renderTrainingLoadout();
+            } else if (result?.unconfigured) {
+              trainingLoadoutStatus.textContent = 'Покупка пока недоступна: товар ещё не настроен в магазине.';
+            } else {
+              trainingLoadoutStatus.textContent = 'Покупка отменена или временно недоступна.';
+            }
+          });
+
+          actions.append(missionButton, purchaseButton);
+          card.append(button, actions);
+        }
+        if (isUnlocked) card.append(button);
+        trainingLoadoutGrid.append(card);
+      }
+      trainingStartButton.disabled = selectedTrainingWeapons.size === 0;
     };
-    trainingSelect.querySelectorAll('[data-weapon]').forEach(button => button.addEventListener('click', () => {
-      selectTrainingWeapon(button.dataset.weapon);
-      launchTraining(selectedTrainingWeapon);
-    }));
+    trainingStartButton.addEventListener('click', () => launchTraining('free'));
+    trainingSettings.querySelector('.training-settings-back').addEventListener('click', () => {
+      trainingSettings.hidden = true;
+      modeSelect.hidden = false;
+      if (startSubtitle) startSubtitle.hidden = false;
+    });
+
     const setup = document.createElement('div');
     setup.className = 'match-setup';
     setup.hidden = true;
@@ -1815,7 +1975,7 @@ export class Game {
       </div>
       <div class="setup-actions"><button type="button" class="setup-back">← Назад</button><svg class="setup-doodle" viewBox="0 0 180 80" aria-hidden="true"><path d="M5 35 Q35 0 40 48 T75 55 M95 36 C75 12 127 6 123 34 L150 38 Q145 70 112 65 Q85 61 95 36 M98 13 L94 2 L105 8 L114 1 L119 14 M150 18 Q166 3 174 21 L176 36 L158 28"/><circle cx="112" cy="27" r="2"/></svg></div>
     `;
-    start.before(modeSelect, trainingSelect, setup);
+    start.before(modeSelect, trainingSelect, trainingSettings, setup);
 
     this.teamCount = setup.querySelector('#team-count');
     this.wormCount = setup.querySelector('#worm-count');
@@ -2004,11 +2164,22 @@ export class Game {
     const launchTraining = weapon => {
       this.gameMode = 'training';
       this.trainingWeapon = weapon;
+      if (weapon === 'free') {
+        this.trainingLoadoutSelection = [...selectedTrainingWeapons];
+        this.saveTrainingLoadout?.(this.trainingLoadoutSelection);
+        trainingSettings.hidden = true;
+      }
       start.click();
     };
     for (const button of modeSelect.querySelectorAll('button')) {
       button.addEventListener('click', () => {
         if (button.dataset.mode === 'training') {
+          modeSelect.hidden = true;
+          trainingSettings.hidden = false;
+          trainingLoadoutStatus.textContent = '';
+          renderTrainingLoadout();
+          if (startSubtitle) startSubtitle.hidden = true;
+        } else if (button.dataset.mode === 'missions') {
           modeSelect.hidden = true;
           trainingSelect.hidden = false;
           if (startSubtitle) startSubtitle.hidden = true;
@@ -2043,10 +2214,28 @@ export class Game {
     this.labels.className = 'worm-labels';
     this.labels.hidden = true;
 
+    this.turnAnnouncement = document.createElement('div');
+    this.turnAnnouncement.className = 'turn-announcement';
+    this.turnAnnouncement.setAttribute('aria-live', 'polite');
+    this.turnAnnouncement.innerHTML = '<div class="turn-banner"><span class="turn-banner-wing turn-banner-wing--left" aria-hidden="true"></span><span class="turn-banner-wing turn-banner-wing--right" aria-hidden="true"></span><div class="turn-banner-panel"><span class="turn-banner-emblem" aria-hidden="true">⚔</span><strong></strong><span></span></div></div>';
+
     this.matchHud = document.createElement('section');
     this.matchHud.className = 'match-hud';
     this.matchHud.hidden = true;
+    this.matchHudCollapsed = true;
     this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><label class="lighting-test-control"><span>Свет</span><select aria-label="Режим освещения карты"><option value="soft">Мягкий</option><option value="flashlight">Фонарик</option><option value="contour">Контуры</option><option value="warm">Тёплый</option><option value="neon">Неон</option></select></label><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · A/D — ходить · W — прыжок · дважды W — сальто назад · мышь / ↑↓ — прицел · пробел / ЛКМ — огонь · 1–5 — запал</p>';
+    this.matchHudToggle = document.createElement('button');
+    this.matchHudToggle.type = 'button';
+    this.matchHudToggle.className = 'match-hud-toggle';
+    this.matchHudToggle.textContent = 'Панель';
+    this.matchHudToggle.setAttribute('aria-expanded', 'false');
+    this.matchHudToggle.hidden = true;
+    this.matchHudToggle.addEventListener('click', () => {
+      this.matchHudCollapsed = !this.matchHudCollapsed;
+      this.matchHud.hidden = this.matchHudCollapsed;
+      this.matchHudToggle.textContent = this.matchHudCollapsed ? 'Панель' : 'Скрыть';
+      this.matchHudToggle.setAttribute('aria-expanded', String(!this.matchHudCollapsed));
+    });
     this.weaponPanel = new WeaponPanel(this, this.matchHud.querySelector('.arsenal-toggle'));
 
     const hint = document.createElement('p');
@@ -2076,7 +2265,7 @@ export class Game {
     this.teamHealthHud.hidden = true;
     this.teamHealthCards = [];
 
-    document.querySelector('#game-root').append(this.labels, this.matchHud, this.teamHealthHud, this.audioTestHud);
+    document.querySelector('#game-root').append(this.labels, this.turnAnnouncement, this.matchHud, this.matchHudToggle, this.teamHealthHud, this.audioTestHud);
     this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
@@ -2090,6 +2279,8 @@ export class Game {
       this.pause();
       this.inMenu = true;
       this.matchHud.hidden = true;
+      this.matchHudToggle.hidden = true;
+      this.matchHudCollapsed = true;
       this.teamHealthHud.hidden = true;
       this.audioTestHud.hidden = true;
       this.labels.hidden = true;
@@ -2177,6 +2368,14 @@ export class Game {
       const x = (this.vector.x * .5 + .5) * this.width;
       const y = (-this.vector.y * .5 + .5) * this.height;
       w.label.style.transform = `translate3d(${x.toFixed(2)}px,${y.toFixed(2)}px,0) translate(-50%,-100%)`;
+    }
+    for (const w of this.worms) if (w.state === 'drowning' && w.drowningDamagePopup) {
+      const popupRise = Math.min(w.drowningTime * .8, 1.4);
+      this.vector.set(w.drowningStartX, w.drowningSurfaceY + .45 + popupRise, 0);
+      this.vector.project(this.camera);
+      const x = (this.vector.x * .5 + .5) * this.width;
+      const y = (-this.vector.y * .5 + .5) * this.height;
+      w.drowningDamagePopup.style.transform = `translate3d(${x.toFixed(2)}px,${y.toFixed(2)}px,0) translate(-50%,-100%)`;
     }
   }
 }

@@ -273,7 +273,7 @@ export class Weapons {
     if(type==='madCows'){for(let i=0;i<this.cowCount;i++){const p=this.spawn('madCow',w.x+w.facing,w.y+.2,0,0,20);p.delay=i*.6;p.body.setEnabled(false);p.mesh.visible=false;}return true;}
     if(type==='frenchSheep'){for(let i=0;i<5;i++)this.spawn('frenchSheep',THREE.MathUtils.clamp(this.target.x+(i-2)*1.8,1,MAP.width-1),MAP.height+3+i,w.facing*2,-9,20);this.resetTarget();return true;}
     if(type==='carpet'||type==='armageddon'){const count=type==='carpet'?8:12;for(let i=0;i<count;i++)this.spawn(type,THREE.MathUtils.clamp(type==='armageddon'?Math.random()*MAP.width:this.target.x+(i-(count-1)/2)*2.2,1,MAP.width-1),MAP.height+3+i*.7,1,-10,12);this.resetTarget();return true;}
-    if(type==='indianTest'){g.waterLevel=(g.waterLevel||0)+3;g.water.visible=true;const waterHeight=g.baseWaterSurface+g.waterLevel-g.waterBottom;g.water.scale.y=waterHeight;g.water.material.uniforms.uVerticalScale.value=waterHeight;g.water.position.y=g.waterBottom+waterHeight/2;for(const worm of g.worms)if(worm.alive&&!worm.frozen)worm.radiation=Math.max(worm.radiation||0,5);this.resetTarget();g.turn.settle();return true;}
+    if(type==='indianTest'){g.waterLevel=(g.waterLevel||0)+3;g.water.visible=true;for(const worm of g.worms)if(worm.alive&&!worm.frozen)worm.radiation=Math.max(worm.radiation||0,5);this.resetTarget();g.turn.settle();return true;}
     if(type==='donkey'||type==='mbBomb'){this.spawn(type,this.target.x,MAP.height+5,0,-8,12);this.resetTarget();return true;}
     if(type==='banana'||type==='superBanana'||type==='holy'||type==='petrol'){
       const launchSpeed=type==='oldWoman'?2:speed,launchY=type==='oldWoman'?0:dy*launchSpeed;

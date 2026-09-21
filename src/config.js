@@ -4,6 +4,7 @@ export const GAME_CONFIG = Object.freeze({
   leaderboardName: 'REPLACE_WITH_LEADERBOARD_NAME',
   productIds: Object.freeze({
     example: 'REPLACE_WITH_PRODUCT_ID',
+    trainingWeaponPack: 'REPLACE_WITH_TRAINING_WEAPON_PACK_ID',
   }),
   mobileStickyBanner: Object.freeze({
     enabled: true,
@@ -11,4 +12,3 @@ export const GAME_CONFIG = Object.freeze({
     hideBelowHeight: 560,
   }),
 });
-

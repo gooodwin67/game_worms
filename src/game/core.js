@@ -81,6 +81,7 @@ export class TurnMachine {
       this.cursors[this.team] = wormOrder[wormOrderIndex];
     } while (!worms[this.cursors[this.team]].alive);
     g.active = worms[this.cursors[this.team]];
+    g.showTurnAnnouncement?.(this.team);
     g.cameraFocus = g.active;
     g.turnIntroTime = 1.8;
     g.audio?.play('turnIndicator');
@@ -88,7 +89,7 @@ export class TurnMachine {
     g.wind = g.windEnabled ? (Math.random() * 2 - 1) * WIND_MAX : 0;
     for (const worm of g.worms) if (worm.team === this.team) { worm.frozen = false; worm.speedBoost = false; worm.invisible = false; worm.laserSight = false; }
     for (const worm of g.worms) if (worm.alive && !worm.frozen && (worm.poison || worm.radiation)) g.damage(worm, Math.min(worm.hp - 1, 2), false, false);
-    this.remaining = g.trainingFreePractice || !g.turnTimeLimit ? Infinity : g.turnTimeLimit; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' && g.trainingWeapon !== 'free' ? g.trainingWeapon : 'bazooka'; this.weaponConsumed = false; this.state = TURN.WAITING_INPUT;
+    this.remaining = g.trainingFreePractice || !g.turnTimeLimit ? Infinity : g.turnTimeLimit; this.shots = 2; this.charge = 0; this.weapon = g.gameMode === 'training' ? (g.trainingFreePractice ? g.trainingLoadout?.values().next().value || 'bazooka' : g.trainingWeapon) : 'bazooka'; this.weaponConsumed = false; this.state = TURN.WAITING_INPUT;
     g.angle = g.active.facing < 0 ? Math.PI * .75 : Math.PI * .25;
     g.keys.clear(); g.weapons.resetTarget(); g.bot.reset();
   }
