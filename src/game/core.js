@@ -44,6 +44,7 @@ export class TurnMachine {
   }
   next() {
     const g = this.game;
+    g.releasePendingDamagePopups?.();
     if (g.damageDisplayTime > 0 || !g.damagePresentationComplete()) { this.still = 0; this.state = TURN.SETTLING; return; }
     g.audio?.stopLoop('turnCountdown');
     this.countdownStarted = false;

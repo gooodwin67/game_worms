@@ -31,7 +31,7 @@ export class App {
   }
 
   completeTrainingMission(missionId) {
-    if (!['bazooka', 'grenade'].includes(missionId)) return;
+    if (!['bazooka', 'grenade', 'mortar'].includes(missionId)) return;
     if (!this.state.completedTrainingMissions.includes(missionId)) {
       this.state.completedTrainingMissions.push(missionId);
       void this.saveState({ flush: true });

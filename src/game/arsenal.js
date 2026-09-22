@@ -31,7 +31,7 @@ export class Weapons {
     this.ray=new RAPIER.Ray({x:0,y:0},{x:1,y:0});this.velocity={x:0,y:0};this.target={x:48,y:20};this.targetSet=false;
     this.visualBullets=[];this.bulletGeometry=new THREE.CircleGeometry(.075,10);this.bulletMaterial=new THREE.MeshBasicMaterial({color:0xffe08a,transparent:true,depthWrite:false});
     this.byCollider=new Map();this.pool=[];this.geometry=new THREE.PlaneGeometry(1,1);
-    for(let i=0;i<160;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial({transparent:true,alphaTest:.08,depthWrite:false,side:THREE.DoubleSide}));mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh});}
+    for(let i=0;i<160;i++){const mesh=new THREE.Mesh(this.geometry,new THREE.MeshBasicMaterial({transparent:true,alphaTest:.08,depthWrite:false,side:THREE.DoubleSide}));mesh.visible=false;game.scene.add(mesh);this.pool.push({active:false,mesh,baseMesh:mesh,rocketMesh:null});}
     this.fireParticles=this.createFireParticleSystem(256);
     this.fireGlintData={
       positions:Array.from({length:MAX_FIRE_GLINTS},()=>new THREE.Vector2()),
@@ -88,7 +88,7 @@ export class Weapons {
     this.g.weaponArt.projectile(p,type,radius);p.mesh.position.set(x,y,.2);p.mesh.visible=true;
     this.byCollider.set(collider.handle,p);return p;
   }
-  remove(p){this.byCollider.delete(p.collider.handle);this.g.world.removeRigidBody(p.body);p.active=false;p.mesh.visible=false;}
+  remove(p,preserveSmoke=false){this.byCollider.delete(p.collider.handle);this.g.world.removeRigidBody(p.body);p.active=false;if(p.rocketMesh){if(preserveSmoke)this.g.weaponArt.detachRocketSmoke(p);else this.g.weaponArt.hideRocket(p);}p.mesh.visible=false;}
   showBullet(x1,y1,x2,y2){
     const mesh=new THREE.Mesh(this.bulletGeometry,this.bulletMaterial);mesh.position.set(x1,y1,.35);this.g.scene.add(mesh);
     const distance=Math.hypot(x2-x1,y2-y1);this.visualBullets.push({mesh,x1,y1,x2,y2,age:0,duration:THREE.MathUtils.clamp(distance/42,.045,.18)});
@@ -269,7 +269,7 @@ export class Weapons {
       this.message=type==='sheep'||type==='superSheep'?'Пробел / ЛКМ — взорвать овечку':'Можно отойти: A/D, W';return true;
     }
     if(type==='sheepLauncher'){this.spawn('sheepLauncher',w.x+dx,w.y+dy,dx*32,dy*32,20);this.retreat=0;this.message='Пробел / ЛКМ — взорвать овечку';return true;}
-    if(['airstrike','napalm','mailstrike','minestrike','moleSquadron'].includes(type)){const dropType=type==='minestrike'?'mine':type==='moleSquadron'?'moleBomb':type==='airstrike'||type==='napalm'?'napalm':type==='mailstrike'?'mailstrike':'bomb';const drops=type==='moleSquadron'?4:type==='airstrike'?5:6;for(let i=0;i<drops;i++)this.spawn(dropType,THREE.MathUtils.clamp(this.target.x+(i-(drops-1)/2)*2.6,1,MAP.width-1),MAP.height+3+i*1.4,type==='napalm'?0:w.facing*3,type==='napalm'?-1.5:-9,type==='minestrike'?Infinity:12);this.resetTarget();return true;}
+    if(['airstrike','napalm','mailstrike','minestrike','moleSquadron'].includes(type)){const dropType=type==='airstrike'?'bazooka':type==='minestrike'?'mine':type==='moleSquadron'?'moleBomb':type==='napalm'?'napalm':type==='mailstrike'?'mailstrike':'bomb';const drops=type==='moleSquadron'?4:type==='airstrike'?5:6;for(let i=0;i<drops;i++)this.spawn(dropType,THREE.MathUtils.clamp(this.target.x+(i-(drops-1)/2)*2.6,1,MAP.width-1),MAP.height+3+i*1.4,type==='napalm'?0:w.facing*3,type==='napalm'?-1.5:-9,type==='minestrike'?Infinity:12);this.resetTarget();return true;}
     if(type==='madCows'){for(let i=0;i<this.cowCount;i++){const p=this.spawn('madCow',w.x+w.facing,w.y+.2,0,0,20);p.delay=i*.6;p.body.setEnabled(false);p.mesh.visible=false;}return true;}
     if(type==='frenchSheep'){for(let i=0;i<5;i++)this.spawn('frenchSheep',THREE.MathUtils.clamp(this.target.x+(i-2)*1.8,1,MAP.width-1),MAP.height+3+i,w.facing*2,-9,20);this.resetTarget();return true;}
     if(type==='carpet'||type==='armageddon'){const count=type==='carpet'?8:12;for(let i=0;i<count;i++)this.spawn(type,THREE.MathUtils.clamp(type==='armageddon'?Math.random()*MAP.width:this.target.x+(i-(count-1)/2)*2.2,1,MAP.width-1),MAP.height+3+i*.7,1,-10,12);this.resetTarget();return true;}
@@ -345,7 +345,7 @@ export class Weapons {
   }
   getFireLightData(){return this.fireGlintData;}
   update(dt) {
-    const g=this.g;g.events.drainCollisionEvents(this.onCollision);this.retreat=Math.max(0,this.retreat-dt);this.projectile=null;
+    const g=this.g;g.events.drainCollisionEvents(this.onCollision);g.weaponArt.updateDetachedSmoke(dt);this.retreat=Math.max(0,this.retreat-dt);this.projectile=null;
     for(let i=this.visualBullets.length-1;i>=0;i--){const bullet=this.visualBullets[i];bullet.age+=dt;const t=Math.min(1,bullet.age/bullet.duration);bullet.mesh.position.set(THREE.MathUtils.lerp(bullet.x1,bullet.x2,t),THREE.MathUtils.lerp(bullet.y1,bullet.y2,t),.35);bullet.mesh.scale.setScalar(1-t*.35);if(t>=1){bullet.mesh.removeFromParent();this.visualBullets.splice(i,1);}}
     if(this.earthquake){
       if(this.earthquake.offsetTime>0){this.earthquake.offsetTime-=dt;if(this.earthquake.offsetTime<=0&&g.terrain){const delta=g.terrain.setEarthquakeOffset(0,0);this.moveGroundedWorms(delta.x,delta.y);}}
@@ -384,7 +384,7 @@ export class Weapons {
     if(this.burst){const b=this.burst;b.tick-=dt;if(!b.owner.alive)this.burst=null;else if(b.tick<=0){this.fireGun(b.type);b.left--;b.tick=.1;if(!b.left)this.burst=null;}}
     for(let i=this.hazards.length-1;i>=0;i--){
       const hazard=this.hazards[i];hazard.remaining-=dt;hazard.tick-=dt;hazard.age=(hazard.age||0)+dt;
-      if(hazard.remaining>0&&hazard.tick<=0){hazard.tick=hazard.kind==='fire'?.7+Math.random()*.8:hazard.tickInterval||1;if(hazard.kind==='fire'&&!g.trainingIndestructible){const groundParticles=hazard.particleSlots.filter(p=>p.active&&!p.smokeStarted&&(g.terrain.isSolid(p.x,p.y-.04)||g.terrain.isSolid(p.x,p.y-.12)));const limit=Math.min(8,groundParticles.length);for(let i=0;i<limit;i++){const particle=groundParticles[(hazard.groundDamageIndex++)%groundParticles.length];g.terrain.createExplosion(particle.x,particle.y-.08,.45);}}for(const worm of g.worms)if(worm.alive&&!worm.frozen){const inFire=hazard.kind==='fire'?hazard.particleSlots.some(p=>p.active&&p.grounded&&!p.smokeStarted&&Math.hypot(worm.x-p.x, worm.y-p.y)<.9):Math.hypot(worm.x-hazard.x,worm.y-hazard.y)<hazard.radius;if(!inFire)continue;if(hazard.kind==='poison')worm.poison=Math.max(worm.poison||0,hazard.damage);else{const appliedDamage=Math.max(1,hazard.damage*.5),previousHp=worm.hp;g.damage(worm,appliedDamage,false,false);const fireDamage=g.trainingFreePractice?appliedDamage:previousHp-worm.hp;if(fireDamage>0){worm.fireDamageTotal=(worm.fireDamageTotal||0)+fireDamage;worm.damagePopupQueue.pop();}if(worm.alive){g.audio?.play('landing');const dx=worm.x-hazard.x,dy=worm.y-hazard.y,distance=Math.max(.25,Math.hypot(dx,dy)),impulse=2.25;worm.knockedDown=true;worm.impactVelocityX=worm.body.linvel().x;worm.impactSpinDirection=dx<0?-1:1;worm.tumbleRotation=worm.mesh.rotation.z;worm.body.applyImpulse({x:dx/distance*impulse,y:(dy/distance+.72)*impulse},true);worm.slideTime=Math.max(worm.slideTime,.35);}}}}
+      if(hazard.remaining>0&&hazard.tick<=0){hazard.tick=hazard.kind==='fire'?.7+Math.random()*.8:hazard.tickInterval||1;if(hazard.kind==='fire'&&!g.trainingIndestructible){const groundParticles=hazard.particleSlots.filter(p=>p.active&&!p.smokeStarted&&(g.terrain.isSolid(p.x,p.y-.04)||g.terrain.isSolid(p.x,p.y-.12)));const limit=Math.min(8,groundParticles.length);for(let i=0;i<limit;i++){const particle=groundParticles[(hazard.groundDamageIndex++)%groundParticles.length];g.terrain.createExplosion(particle.x,particle.y-.08,.45);}}for(const worm of g.worms)if(worm.alive&&!worm.frozen){const inFire=hazard.kind==='fire'?hazard.particleSlots.some(p=>p.active&&p.grounded&&!p.smokeStarted&&Math.hypot(worm.x-p.x, worm.y-p.y)<.9):Math.hypot(worm.x-hazard.x,worm.y-hazard.y)<hazard.radius;if(!inFire)continue;if(hazard.kind==='poison')worm.poison=Math.max(worm.poison||0,hazard.damage);else{const appliedDamage=Math.max(1,hazard.damage*.5);g.damage(worm,appliedDamage,false,false);if(worm.alive){g.audio?.play('landing');const dx=worm.x-hazard.x,dy=worm.y-hazard.y,distance=Math.max(.25,Math.hypot(dx,dy)),impulse=2.25;worm.knockedDown=true;worm.impactVelocityX=worm.body.linvel().x;worm.impactSpinDirection=dx<0?-1:1;worm.tumbleRotation=worm.mesh.rotation.z;worm.body.applyImpulse({x:dx/distance*impulse,y:(dy/distance+.72)*impulse},true);worm.slideTime=Math.max(worm.slideTime,.35);}}}}
       if(hazard.remaining<=0&&!hazard.particleSlots?.some(p=>p.active)){this.hazards.splice(i,1);}
     }
     this.updateFireParticles(dt);
@@ -487,7 +487,7 @@ export class Weapons {
         for(const w of g.worms)if(w.alive&&(w!==p.owner||p.ownerClear)&&Math.hypot(w.x-p.x,w.y-p.y)<2){p.triggered=true;p.remaining=3;this.endUtility(true);g.turn.state=TURN.ACTION_RESOLVING;g.turn.charge=0;g.turn.shots=0;this.retreat=0;break;}
       }
       p.mesh.position.set(p.x,p.y,.2);g.weaponArt.orient(p,dt);
-      if(p.type==='mine')p.mesh.material.color.setHex(p.triggered?(Math.floor(p.age*12)%2?0xff3333:0xffffff):0xffffff);
+      if(p.type==='mine')p.mesh.material?.color.setHex(p.triggered?(Math.floor(p.age*12)%2?0xff3333:0xffffff):0xffffff);
       if((p.type!=='homing'&&p.y<(g.waterLevel||0)-.5)||p.y < -5 || p.x < -10 || p.x > MAP.width+10){this.remove(p);continue;}
       const impact=p.hit&&(GROUND_PROJECTILES.has(p.type)||p.type==='mortar'||p.type==='donkey'||p.type==='napalm'||p.type==='mailstrike'||p.type==='carpet'||p.type==='armageddon'||p.type==='moleBomb');
       if(p.type==='holy'&&p.remaining<=0&&p.age<30&&Math.hypot(p.body.linvel().x,p.body.linvel().y)>.15)continue;
@@ -498,7 +498,8 @@ export class Weapons {
     if(g.turn.state===TURN.ACTION_RESOLVING&&!this.busy())g.turn.settle();
   }
   detonate(p){
-    const {x,y,type,owner,damageOverride,radiusOverride}=p;this.remove(p);
+    const {x,y,type,owner,damageOverride,radiusOverride}=p;this.remove(p,true);
+    this.g.cameraFocus={x,y,explosionFocus:true};
     if(type==='dragonBall')return;
     const specs={
       bazooka:[3.5,50],homing:[3.5,50],pigeon:[4,75],magicBullet:[4.5,100],mortar:[1.8,35],
@@ -547,5 +548,5 @@ export class Weapons {
       g.particles.emit(x,y,.35);
     }
   }
-  dispose(){this.hazards.length=0;for(const bullet of this.visualBullets){bullet.mesh.removeFromParent();}this.visualBullets.length=0;this.bulletGeometry.dispose();this.bulletMaterial.dispose();this.fireParticles.mesh.removeFromParent();this.fireParticles.geometry.dispose();this.fireParticles.material.dispose();this.tether.removeFromParent();this.tether.geometry.dispose();this.tether.material.dispose();for(const p of this.pool){p.mesh.removeFromParent();p.mesh.material.dispose();}this.geometry.dispose();this.marker.removeFromParent();this.marker.traverse(child=>{child.geometry?.dispose();if(child.material?.dispose)child.material.dispose();});}
+  dispose(){this.hazards.length=0;for(const bullet of this.visualBullets){bullet.mesh.removeFromParent();}this.visualBullets.length=0;this.bulletGeometry.dispose();this.bulletMaterial.dispose();this.fireParticles.mesh.removeFromParent();this.fireParticles.geometry.dispose();this.fireParticles.material.dispose();this.tether.removeFromParent();this.tether.geometry.dispose();this.tether.material.dispose();for(const p of this.pool){p.baseMesh.removeFromParent();p.baseMesh.material.dispose();if(p.rocketMesh){const smokePuffs=p.rocketMesh.userData.rocketArt?.smokePuffs||[];p.rocketMesh.removeFromParent();p.rocketMesh.traverse(child=>{child.geometry?.dispose();if(child.material?.dispose)child.material.dispose();});for(const puff of smokePuffs){puff.removeFromParent();puff.geometry?.dispose();puff.material?.dispose();}}}this.geometry.dispose();this.marker.removeFromParent();this.marker.traverse(child=>{child.geometry?.dispose();if(child.material?.dispose)child.material.dispose();});}
 }

@@ -33,15 +33,29 @@ export class Terrain {
       this.generateProcedural();
     }
 
+    // Цвет грунта храним отдельно от разрушаемой маски. После destination-out
+    // браузер может обнулить RGB прозрачных пикселей CanvasTexture, из-за чего
+    // оставшийся грунт иногда становится чёрным после первого взрыва.
+    this.colorCanvas = document.createElement('canvas');
+    this.colorCanvas.width = this.canvas.width;
+    this.colorCanvas.height = this.canvas.height;
+    this.colorCtx = this.colorCanvas.getContext('2d');
+    this.colorCtx.drawImage(this.canvas, 0, 0);
+
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.minFilter = THREE.LinearFilter;
     this.texture.magFilter = THREE.LinearFilter;
     this.texture.generateMipmaps = false;
+    this.colorTexture = new THREE.CanvasTexture(this.colorCanvas);
+    this.colorTexture.minFilter = THREE.LinearFilter;
+    this.colorTexture.magFilter = THREE.LinearFilter;
+    this.colorTexture.generateMipmaps = false;
 
     // Шейдер: если карта из файла — берет её оригинальный цвет, иначе процедурную траву
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         mask: { value: this.texture },
+        colorMap: { value: this.colorTexture },
         mapSize: { value: new THREE.Vector2(this.canvas.width, this.canvas.height) },
         useCustomTexture: { value: this.hasCustomImage ? 1.0 : 0.0 },
         lightPos: { value: new THREE.Vector2(MAP.width * .5, MAP.height * .78) },
@@ -65,6 +79,7 @@ export class Terrain {
       `,
       fragmentShader: `
         uniform sampler2D mask;
+        uniform sampler2D colorMap;
         uniform vec2 mapSize;
         uniform float useCustomTexture;
         uniform vec2 lightPos;
@@ -99,6 +114,7 @@ export class Terrain {
         void main() {
           vec2 px = 1.0 / mapSize;
           vec4 sampleCenter = texture2D(mask, vUv);
+          vec4 colorCenter = texture2D(colorMap, vUv);
 
           if (sampleCenter.a < 0.4) discard;
           float edgeAlpha = smoothstep(0.4, 0.7, sampleCenter.a);
@@ -132,7 +148,7 @@ export class Terrain {
 
           if (useCustomTexture > 0.5) {
             // Берем оригинальные цвета картинки
-            finalColor = sampleCenter.rgb;
+            finalColor = colorCenter.rgb;
 
             // Тёмная окантовка на срезах взрывов и по краям острова
             float edgeDarkening = smoothstep(0.4, 0.95, sampleSurround);
@@ -436,10 +452,14 @@ export class Terrain {
       let sourceCount = 0;
       const sourceLimit = Math.ceil(MAX_PARTICLE_GLINTS / sources.length);
       while (data && sourceCount < Math.min(data.count || 0, sourceLimit) && count < MAX_PARTICLE_GLINTS) {
-        positions[count].copy(data.positions[sourceCount]);
-        colors[count].copy(data.colors[sourceCount]);
-        strengths[count] = data.strengths[sourceCount];
+        const position = data.positions[sourceCount];
+        const color = data.colors[sourceCount];
+        const strength = data.strengths[sourceCount];
         sourceCount++;
+        if (!position || !color || !Number.isFinite(position.x) || !Number.isFinite(position.y) || !Number.isFinite(strength) || strength <= 0) continue;
+        positions[count].copy(position);
+        colors[count].copy(color);
+        strengths[count] = strength;
         count++;
       }
     }
@@ -546,18 +566,20 @@ export class Terrain {
   }
 
   createGirder(x, y, angle, length) {
-    const c = this.ctx;
-    c.save();
-    c.globalCompositeOperation = 'source-over';
-    c.strokeStyle = '#8b5a2b';
-    c.lineWidth = .34 * this.scale;
-    c.lineCap = 'round';
-    c.beginPath();
-    c.moveTo((x - Math.cos(angle) * length / 2) * this.scale, (MAP.height - (y - Math.sin(angle) * length / 2)) * this.scale);
-    c.lineTo((x + Math.cos(angle) * length / 2) * this.scale, (MAP.height - (y + Math.sin(angle) * length / 2)) * this.scale);
-    c.stroke();
-    c.restore();
+    for (const c of [this.ctx, this.colorCtx]) {
+      c.save();
+      c.globalCompositeOperation = 'source-over';
+      c.strokeStyle = '#8b5a2b';
+      c.lineWidth = .34 * this.scale;
+      c.lineCap = 'round';
+      c.beginPath();
+      c.moveTo((x - Math.cos(angle) * length / 2) * this.scale, (MAP.height - (y - Math.sin(angle) * length / 2)) * this.scale);
+      c.lineTo((x + Math.cos(angle) * length / 2) * this.scale, (MAP.height - (y + Math.sin(angle) * length / 2)) * this.scale);
+      c.stroke();
+      c.restore();
+    }
     this.texture.needsUpdate = true;
+    this.colorTexture.needsUpdate = true;
     for (let cy = 0; cy < this.rows; cy++) for (let cx = 0; cx < this.columns; cx++) this.rebuild(cx, cy);
   }
 
@@ -566,5 +588,6 @@ export class Terrain {
     this.mesh.geometry.dispose();
     this.material.dispose();
     this.texture.dispose();
+    this.colorTexture.dispose();
   }
 }
