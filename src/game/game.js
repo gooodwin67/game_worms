@@ -1982,7 +1982,7 @@ export class Game {
       const action = event.currentTarget.dataset.action;
       event.currentTarget.setPointerCapture?.(event.pointerId);
       if (action === 'jump') {
-        this.keys.add('KeyW');
+        this.keys.add('Space');
         const activeWorm = this.active;
         if (activeWorm && this.time - activeWorm.jumpTapTime <= .38) activeWorm.backflipRequested = true;
         if (activeWorm) activeWorm.jumpTapTime = this.time;
@@ -2050,7 +2050,7 @@ export class Game {
             const viewWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
             const viewHeight = (this.camera.top - this.camera.bottom) / this.camera.zoom;
             this.cameraPan.x = this.touchGesture.startPan.x - deltaX * viewWidth / rect.width;
-            this.cameraPan.y = this.touchGesture.startPan.y - deltaY * viewHeight / rect.height;
+            this.cameraPan.y = this.touchGesture.startPan.y + deltaY * viewHeight / rect.height;
             return;
           }
         }
@@ -2066,7 +2066,7 @@ export class Game {
           const viewWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
           const viewHeight = (this.camera.top - this.camera.bottom) / this.camera.zoom;
           this.cameraPan.x = this.touchGesture.startPan.x - (midpointX - this.touchGesture.startMidpoint.x) * viewWidth / rect.width;
-          this.cameraPan.y = this.touchGesture.startPan.y - (midpointY - this.touchGesture.startMidpoint.y) * viewHeight / rect.height;
+          this.cameraPan.y = this.touchGesture.startPan.y + (midpointY - this.touchGesture.startMidpoint.y) * viewHeight / rect.height;
           this.zoom = THREE.MathUtils.clamp(this.touchGesture.startZoom * distance / this.touchGesture.startDistance, 1, 3);
           return;
         }
