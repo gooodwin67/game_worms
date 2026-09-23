@@ -3499,7 +3499,7 @@ button {
   }
 }
 
-/* Touch controls for phones and tablets. The canvas remains the aiming surface. */
+/* Touch controls for phones and tablets. */
 .mobile-controls {
   position: absolute;
   z-index: 8;
@@ -3563,72 +3563,21 @@ button {
   box-shadow: 0 5px 16px rgb(0 0 0 / 45%), inset 0 2px rgb(255 255 255 / 45%);
 }
 
-.mobile-camera {
-  top: max(74px, calc(env(safe-area-inset-top) + 64px));
-  left: 50%;
-  width: 122px;
-  display: grid;
-  grid-template-columns: repeat(3, 36px);
-  gap: 3px;
-  transform: translateX(-50%);
-  pointer-events: auto;
-}
-
-.mobile-camera button {
-  width: 36px;
-  height: 30px;
-  border-radius: 8px;
-  font-size: 16px;
-  opacity: .82;
-}
-
-.mobile-camera button:first-child {
-  grid-column: 2;
-}
-
-.mobile-camera button:nth-child(2) {
-  grid-column: 1;
-  grid-row: 2;
-}
-
-.mobile-camera button:nth-child(3) {
-  grid-column: 2;
-  grid-row: 2;
-  font-size: 13px;
-}
-
-.mobile-camera button:nth-child(4) {
-  grid-column: 3;
-  grid-row: 2;
-}
-
-.mobile-camera button:nth-child(5) {
-  grid-column: 2;
-  grid-row: 3;
-}
-
-.mobile-camera button:nth-child(6) {
-  grid-column: 1;
-  grid-row: 3;
-}
-
-.mobile-camera button:nth-child(7) {
-  grid-column: 3;
-  grid-row: 3;
-}
-
-.mobile-gesture-hint {
+.mobile-arsenal-toggle {
   position: absolute;
-  top: max(178px, calc(env(safe-area-inset-top) + 168px));
-  left: 50%;
-  padding: 4px 8px;
-  border-radius: 999px;
-  color: rgb(235 244 255 / 75%);
-  font-size: 10px;
-  white-space: nowrap;
-  background: rgb(0 0 0 / 28%);
-  transform: translateX(-50%);
-  pointer-events: none;
+  top: max(58px, calc(env(safe-area-inset-top) + 50px));
+  right: max(10px, env(safe-area-inset-right));
+  z-index: 9;
+  min-height: 42px;
+  padding: 0 13px;
+  border: 1px solid rgb(255 255 255 / 35%);
+  border-radius: 12px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  background: rgb(8 19 43 / 82%);
+  box-shadow: 0 4px 13px rgb(0 0 0 / 32%);
+  pointer-events: auto;
 }
 
 @media (pointer: coarse),
@@ -3664,12 +3613,9 @@ button {
     height: 56px;
   }
 
-  .mobile-camera {
-    transform: translateX(-50%) scale(.9);
-  }
 }
 
-/* Keep the mobile battle view clear: actions remain, informational HUD does not. */
+/* Compact mobile status, wind, and team health panels. */
 @media (pointer: coarse),
 (max-width: 700px) {
 
@@ -3678,12 +3624,81 @@ button {
   .match-hud-toggle,
   .background-hud,
   .background-hud-toggle,
-  .team-health-hud,
-  .worm-labels,
-  .turn-announcement,
-  .weapon-panel,
-  .mobile-camera,
-  .mobile-gesture-hint {
+  .turn-announcement {
     display: none !important;
+  }
+
+  .wind-hud {
+    top: max(8px, env(safe-area-inset-top));
+    left: 50%;
+    display: grid;
+    grid-template-columns: auto minmax(48px, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    width: min(208px, calc(100vw - 150px));
+    padding: 5px 8px;
+    border-radius: 10px;
+    transform: translateX(-50%);
+  }
+
+  .wind-hud-heading {
+    display: contents;
+  }
+
+  .wind-hud-heading strong {
+    font-size: 9px;
+    letter-spacing: .06em;
+  }
+
+  .wind-hud-icon,
+  .wind-hud-scale {
+    display: none;
+  }
+
+  .wind-hud-value {
+    grid-column: 3;
+    grid-row: 1;
+    font-size: 10px;
+  }
+
+  .wind-track {
+    grid-column: 2;
+    grid-row: 1;
+    height: 7px;
+    margin: 0;
+  }
+
+  .team-health-hud {
+    bottom: max(72px, calc(env(safe-area-inset-bottom) + 68px));
+    gap: 4px;
+    width: calc(100% - 16px);
+  }
+
+  .team-health-card {
+    flex: 1 1 0;
+    min-width: 0;
+    padding: 5px 5px 6px;
+  }
+
+  .team-health-name {
+    padding-right: 25px;
+    font-size: clamp(8px, 2.5vw, 10px);
+  }
+
+  .team-health-value {
+    top: 4px;
+    right: 5px;
+    font-size: 9px;
+  }
+
+  .team-health-track {
+    height: 5px;
+    margin-top: 4px;
+  }
+
+  .weapon-panel {
+    right: 8px;
+    top: max(8px, env(safe-area-inset-top));
+    max-height: calc(100dvh - 16px);
   }
 }
