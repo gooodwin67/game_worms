@@ -275,7 +275,7 @@ export class Game {
 
     this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.cameraPan = { x: 0, y: 0 }; this.touchPointers = new Map(); this.touchGesture = null; this.mobileControls = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
-    this.inMenu = true; this.installUI(); this.installMobileControls(); this.bindInput();
+    this.inMenu = true; this.installMobileControls(); this.installUI(); this.bindInput();
   }
 
 
@@ -1939,26 +1939,16 @@ export class Game {
       '  <button type="button" data-key="KeyD" aria-label="Идти вправо">▶</button>',
       '  <button type="button" data-action="jump" aria-label="Прыгнуть">↟</button>',
       '</div>',
-      '<div class="mobile-control-group mobile-camera" aria-label="Камера">',
-      '  <button type="button" data-camera="panUp" aria-label="Камера вверх">▲</button>',
-      '  <button type="button" data-camera="panLeft" aria-label="Камера влево">◀</button>',
-      '  <button type="button" data-camera="reset" aria-label="Центрировать камеру">●</button>',
-      '  <button type="button" data-camera="panRight" aria-label="Камера вправо">▶</button>',
-      '  <button type="button" data-camera="panDown" aria-label="Камера вниз">▼</button>',
-      '  <button type="button" data-camera="zoomOut" aria-label="Уменьшить">−</button>',
-      '  <button type="button" data-camera="zoomIn" aria-label="Увеличить">+</button>',
-      '</div>',
       '<div class="mobile-control-group mobile-action" aria-label="Прицел и огонь">',
       '  <button type="button" data-key="ArrowUp" aria-label="Поднять угол">⌃</button>',
       '  <button type="button" data-key="ArrowDown" aria-label="Опустить угол">⌄</button>',
       '  <button type="button" class="mobile-fire" data-action="fire" aria-label="Огонь">ОГОНЬ</button>',
       '</div>',
-      '<div class="mobile-gesture-hint">Два пальца — двигать камеру и менять масштаб</div>'
+      '<button type="button" class="mobile-arsenal-toggle">Оружие</button>'
     ].join('');
     document.querySelector('#game-root').append(controls);
     this.mobileControls = controls;
 
-    const cameraStep = 7;
     const pressKey = event => {
       event.preventDefault();
       event.stopPropagation();
@@ -2011,20 +2001,6 @@ export class Game {
       button.addEventListener('lostpointercapture', releaseAction);
     });
 
-    controls.querySelectorAll('[data-camera]').forEach(button => {
-      button.addEventListener('pointerdown', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        const action = event.currentTarget.dataset.camera;
-        if (action === 'panLeft') this.cameraPan.x -= cameraStep;
-        if (action === 'panRight') this.cameraPan.x += cameraStep;
-        if (action === 'panUp') this.cameraPan.y += cameraStep;
-        if (action === 'panDown') this.cameraPan.y -= cameraStep;
-        if (action === 'zoomIn') this.zoom = THREE.MathUtils.clamp(this.zoom * 1.18, 1, 3);
-        if (action === 'zoomOut') this.zoom = THREE.MathUtils.clamp(this.zoom / 1.18, 1, 3);
-        if (action === 'reset') { this.cameraPan.x = 0; this.cameraPan.y = 0; this.zoom = 1.2; this.cameraFocus = null; }
-      });
-    });
   }
   bindInput() {
     this.canvas.addEventListener('contextmenu', e => { e.preventDefault(); this.weaponPanel.flip(); });
@@ -2063,7 +2039,22 @@ export class Game {
     this.canvas.addEventListener('pointermove', e => {
       if (e.pointerType === 'touch' && this.touchPointers.has(e.pointerId)) {
         this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-        if (this.touchPointers.size >= 2 && this.touchGesture) {
+        if (this.touchGesture && this.touchPointers.size === 1) {
+          const point = this.touchPointers.get(e.pointerId);
+          const deltaX = point.x - this.touchGesture.startPoint.x;
+          const deltaY = point.y - this.touchGesture.startPoint.y;
+          if (Math.hypot(deltaX, deltaY) > 5) this.touchGesture.moved = true;
+          if (this.touchGesture.type === 'pan') {
+            e.preventDefault();
+            const rect = this.canvas.getBoundingClientRect();
+            const viewWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
+            const viewHeight = (this.camera.top - this.camera.bottom) / this.camera.zoom;
+            this.cameraPan.x = this.touchGesture.startPan.x - deltaX * viewWidth / rect.width;
+            this.cameraPan.y = this.touchGesture.startPan.y - deltaY * viewHeight / rect.height;
+            return;
+          }
+        }
+        if (this.touchPointers.size >= 2 && this.touchGesture?.type === 'pinch') {
           e.preventDefault();
           const points = [...this.touchPointers.values()];
           const firstPoint = points[0];
@@ -2096,20 +2087,31 @@ export class Game {
     });
     this.canvas.addEventListener('pointerdown', e => {
       if (e.pointerType === 'touch') {
+        e.preventDefault();
+        if (this.weaponPanel.open) { this.weaponPanel.close(); return; }
         this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        this.canvas.setPointerCapture(e.pointerId);
         if (this.touchPointers.size >= 2) {
           this.turn?.cancelCharge();
           const points = [...this.touchPointers.values()];
           const firstPoint = points[0];
           const secondPoint = points[1];
           this.touchGesture = {
+            type: 'pinch',
             startDistance: Math.max(1, Math.hypot(secondPoint.x - firstPoint.x, secondPoint.y - firstPoint.y)),
             startMidpoint: { x: (firstPoint.x + secondPoint.x) / 2, y: (firstPoint.y + secondPoint.y) / 2 },
             startPan: { x: this.cameraPan.x, y: this.cameraPan.y },
             startZoom: this.zoom
           };
-          return;
+        } else {
+          this.touchGesture = {
+            type: 'pan',
+            startPoint: { x: e.clientX, y: e.clientY },
+            startPan: { x: this.cameraPan.x, y: this.cameraPan.y },
+            moved: false
+          };
         }
+        return;
       }
       if (e.button === 0 && this.weaponPanel.open) { this.weaponPanel.close(); return; }
       if (e.button === 0 && this.humanInput()) {
@@ -2128,17 +2130,43 @@ export class Game {
     });
     this.canvas.addEventListener('pointerup', e => {
       if (e.pointerType === 'touch') {
-        const hadGesture = Boolean(this.touchGesture);
+        const gesture = this.touchGesture;
+        const wasTap = gesture?.type === 'pan' && !gesture.moved && this.touchPointers.size === 1;
         this.touchPointers.delete(e.pointerId);
-        if (this.touchPointers.size < 2) this.touchGesture = null;
-        if (hadGesture || this.touchPointers.size > 0) return;
+        if (gesture?.type === 'pinch' && this.touchPointers.size === 1) {
+          const [remainingPointer] = this.touchPointers.values();
+          this.touchGesture = {
+            type: 'pan',
+            startPoint: { x: remainingPointer.x, y: remainingPointer.y },
+            startPan: { x: this.cameraPan.x, y: this.cameraPan.y },
+            moved: true
+          };
+        } else if (this.touchPointers.size === 0) {
+          this.touchGesture = null;
+        }
+        if (wasTap && this.humanInput() && this.turn.state === TURN.WAITING_INPUT && this.weapons.usesTarget(this.turn.weapon)) {
+          const rect = this.canvas.getBoundingClientRect();
+          this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
+          this.weapons.setTarget(this.vector.x, this.vector.y);
+        }
+        return;
       }
       if (e.button === 0 && e.pointerType !== 'mouse' && this.humanInput()) this.turn.release();
     });
     this.canvas.addEventListener('pointercancel', e => {
       if (e.pointerType === 'touch') {
         this.touchPointers.delete(e.pointerId);
-        this.touchGesture = null;
+        if (this.touchPointers.size === 1 && this.touchGesture?.type === 'pinch') {
+          const [remainingPointer] = this.touchPointers.values();
+          this.touchGesture = {
+            type: 'pan',
+            startPoint: { x: remainingPointer.x, y: remainingPointer.y },
+            startPan: { x: this.cameraPan.x, y: this.cameraPan.y },
+            moved: true
+          };
+        } else if (this.touchPointers.size === 0) {
+          this.touchGesture = null;
+        }
       }
       this.turn?.cancelCharge();
     });
@@ -2698,6 +2726,7 @@ export class Game {
     this.matchHud.hidden = true;
     this.matchHudCollapsed = true;
     this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><label class="lighting-test-control"><span>Свет</span><select aria-label="Режим освещения карты"><option value="soft">Мягкий</option><option value="flashlight">Фонарик</option><option value="contour">Контуры</option><option value="warm">Тёплый</option><option value="neon">Неон</option></select></label><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · ←/→ или A/D — ходить · ↑/↓ или W/S — угол оружия · Пробел — прыжок, дважды — двойной прыжок · мышь — камера · Enter — огонь · 1–5 — запал</p>';
+    const mobileArsenalToggle = document.querySelector('.mobile-arsenal-toggle');
     this.matchHudToggle = document.createElement('button');
     this.matchHudToggle.type = 'button';
     this.matchHudToggle.className = 'match-hud-toggle';
@@ -2710,7 +2739,7 @@ export class Game {
       this.matchHudToggle.textContent = this.matchHudCollapsed ? 'Панель' : 'Скрыть';
       this.matchHudToggle.setAttribute('aria-expanded', String(!this.matchHudCollapsed));
     });
-    this.weaponPanel = new WeaponPanel(this, this.matchHud.querySelector('.arsenal-toggle'));
+    this.weaponPanel = new WeaponPanel(this, [this.matchHud.querySelector('.arsenal-toggle'), mobileArsenalToggle]);
 
     const hint = document.createElement('p');
     hint.className = 'weapon-hint';
