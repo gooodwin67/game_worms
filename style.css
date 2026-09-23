@@ -4240,3 +4240,70 @@ button {
     margin-top: 2px;
   }
 }
+
+/* Compact mobile in-game controls and player cards. */
+@media (pointer: coarse), (max-width: 700px) {
+  .mobile-control-group {
+    gap: 4px;
+  }
+
+  .mobile-control-group button {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    min-height: 42px;
+    border-radius: 11px;
+    font-size: 20px;
+  }
+
+  .mobile-action .mobile-fire {
+    width: 62px;
+    height: 50px;
+    font-size: 12px;
+  }
+
+  .mobile-arsenal-toggle {
+    top: max(8px, env(safe-area-inset-top));
+    right: max(8px, env(safe-area-inset-right));
+    min-height: 36px;
+    padding-inline: 8px;
+    border-radius: 10px;
+    font-size: 11px;
+  }
+
+  .wind-hud {
+    grid-template-columns: auto minmax(28px, 1fr) auto;
+    gap: 5px;
+    width: min(150px, calc(100vw - 184px));
+    padding: 4px 6px;
+  }
+
+  .wind-hud-heading strong,
+  .wind-hud-value {
+    font-size: 8px;
+  }
+
+  .team-health-hud {
+    width: min(82px, 24vw);
+    gap: 2px;
+  }
+
+  .team-health-card {
+    min-height: 20px;
+    padding: 2px 4px;
+  }
+
+  .team-health-name,
+  .team-health-value {
+    font-size: 7px;
+  }
+
+  .team-health-name {
+    padding-right: 20px;
+  }
+
+  .team-health-track {
+    height: 2px;
+    margin-top: 1px;
+  }
+}
