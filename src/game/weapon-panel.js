@@ -23,7 +23,8 @@ const GROUPS = [
 export class WeaponPanel {
   constructor(game, toggle) {
     this.game = game;
-    this.toggle = toggle;
+    this.toggles = Array.isArray(toggle) ? toggle : [toggle];
+    this.toggle = this.toggles[0];
     this.root = document.createElement('aside');
     this.root.className = 'weapon-panel';
     this.root.id = 'weapon-panel';
@@ -80,9 +81,14 @@ export class WeaponPanel {
     this.setupAngleTuner();
     this.root.querySelector('.weapon-panel-close').addEventListener('click', () => this.close(true));
     this.root.addEventListener('contextmenu', e => { e.preventDefault(); this.close(); });
-    toggle.setAttribute('aria-controls', this.root.id);
-    toggle.setAttribute('aria-expanded', 'false');
-    toggle.addEventListener('click', () => this.flip());
+    this.toggles.forEach(button => {
+      button.setAttribute('aria-controls', this.root.id);
+      button.setAttribute('aria-expanded', 'false');
+      button.addEventListener('click', event => {
+        this.openedFrom = event.currentTarget;
+        this.flip();
+      });
+    });
     document.querySelector('#game-root').append(this.root);
   }
   get open() { return !this.root.hidden; }
@@ -163,7 +169,7 @@ export class WeaponPanel {
     }
     this.refresh();
     this.root.hidden = false;
-    this.toggle.setAttribute('aria-expanded', 'true');
+    this.toggles.forEach(button => button.setAttribute('aria-expanded', 'true'));
   }
   close(focus = false) {
     if (this.weaponBeforeAnglePreview) {
@@ -171,9 +177,10 @@ export class WeaponPanel {
       this.weaponBeforeAnglePreview = null;
     }
     this.root.hidden = true;
-    this.toggle.setAttribute('aria-expanded', 'false');
-    if (focus) this.toggle.focus();
+    this.toggles.forEach(button => button.setAttribute('aria-expanded', 'false'));
+    if (focus) (this.openedFrom || this.toggle).focus();
     else if (this.root.contains(document.activeElement)) document.activeElement.blur();
+    this.openedFrom = null;
   }
   select(id) {
     if (!this.canSelect()) return;
@@ -194,7 +201,7 @@ export class WeaponPanel {
   refresh() {
     const g = this.game;
     if (this.open && (!this.canSelect() || this.owner !== g.active)) this.close();
-    this.toggle.disabled = !this.canSelect();
+    this.toggles.forEach(button => { button.disabled = !this.canSelect(); });
     for (const button of this.buttons) {
       const selected = button.dataset.weapon === g.turn.weapon;
       const count = g.weaponCount(button.dataset.weapon);
