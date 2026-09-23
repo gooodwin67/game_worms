@@ -22,6 +22,21 @@ export class AudioManager {
     this.registerSfx('turnIndicator', 'turn_indicator.wav', { volume: 0.65 });
     this.registerSfx('turnCountdown', 'turn_countdown.wav', { loop: true, volume: 0.23 });
     this.registerSfx('supplyCrateDrop', 'supply_crate_drop.wav', { volume: 0.45 });
+    this.registerSfx('mineTicking', 'mine_ticking.wav', { volume: 0.62 });
+    this.registerSfx('sheepBaa', 'sheep_baa.wav', { volume: 0.6 });
+    this.registerSfx('superSheepTakeoff', 'super_sheep_takeoff.wav', { volume: 0.72 });
+    this.registerSfx('moleBombLaunch', 'mole_bomb_launch.wav', { volume: 0.72 });
+    this.registerSfx('animalFlight', 'animal_flight.wav', { loop: true, volume: 0.5 });
+    this.registerSfx('airRaid', 'air_raid.wav', { volume: 0.65 });
+    this.registerSfx('homingLaunch', 'homing_launch.wav', { volume: 0.55 });
+    this.registerSfx('arrowLaunch', 'arrow_launch.wav', { volume: 0.7 });
+    this.registerSfx('firePunchNinja', 'fire_punch_ninja.wav', { volume: 0.8 });
+    this.registerSfx('firePunchHit', 'fire_punch_hit.m4a', { volume: 0.8 });
+    this.registerSfx('shotgun', 'shotgun.wav', { volume: 0.75 });
+    this.registerSfx('pistolShot', 'pistol_shot.wav', { volume: 0.72 });
+    this.registerSfx('mortarShot', 'mortar_shot.wav', { volume: 0.78 });
+    this.registerSfx('uziBurst', 'uzi_burst.mp3', { volume: 0.75 });
+    this.registerSfx('minigunBurst', 'minigun_burst.wav', { volume: 0.75 });
   }
 
   register(audioElement) {
@@ -39,16 +54,37 @@ export class AudioManager {
   }
 
   play(name) {
-    if (!this.enabled) return;
+    if (!this.enabled) return null;
     const source = this.sfx.get(name);
-    if (!source) return;
+    if (!source) return null;
     const audio = source.cloneNode();
     audio.muted = false;
     audio.loop = false;
     audio.volume = source.volume;
     this.register(audio);
     audio.addEventListener('ended', () => this.elements.delete(audio), { once: true });
-    void audio.play().catch(() => {});
+    void audio.play().catch(() => { audio.playFailed = true; this.elements.delete(audio); });
+    return audio;
+  }
+
+  playLoop(name) {
+    if (!this.enabled) return null;
+    const source = this.sfx.get(name);
+    if (!source) return null;
+    const audio = source.cloneNode();
+    audio.muted = false;
+    audio.loop = true;
+    audio.volume = source.volume;
+    this.register(audio);
+    void audio.play().catch(() => { audio.playFailed = true; this.elements.delete(audio); });
+    return audio;
+  }
+
+  stopPlayback(audio) {
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    this.elements.delete(audio);
   }
 
   startLoop(name) {

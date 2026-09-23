@@ -10,11 +10,17 @@ import { WeaponArt, disposeWeaponMesh } from './weapon-art.js';
 import { WEAPON_ICON_REGIONS } from './weapon-icon-regions.js';
 
 const STANDING_SLOPE_NORMAL_Y = Math.cos(80 * Math.PI / 180);
+const TARGET_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23ff3344' stroke-width='2'/%3E%3Cpath d='M16 1v8m0 14v8M1 16h8m14 0h8' stroke='%23ff3344' stroke-width='2'/%3E%3C/svg%3E\") 16 16, crosshair";
 const NO_AIM_WEAPONS = new Set([
   'skipGo', 'surrender', 'selectWorm', 'freeze', 'scales', 'lowGravity', 'fastWalk', 'laserSight', 'invisibility',
   'firePunch', 'battleAxe', 'baseballBat', 'prod', 'kamikaze', 'suicideBomber', 'earthquake',
   'drill', 'pneumaticDrill', 'blowTorch', 'mine', 'dynamite', 'bungee', 'parachute', 'jetPack', 'uppercut'
 ]);
+function clampAimToFacing(angle, facing) {
+  const forward = facing < 0 ? Math.PI : 0;
+  const offset = Math.atan2(Math.sin(angle - forward), Math.cos(angle - forward));
+  return forward + THREE.MathUtils.clamp(offset, -Math.PI / 2, Math.PI / 2);
+}
 const TRAINING_SCENARIOS = Object.freeze({
   free: { map: 'free', mode: 'free', indestructible: false },
   jetPack: { map: 'open', mode: 'free', indestructible: true },
@@ -1110,9 +1116,9 @@ export class Game {
     this.turnAnnouncement.classList.add('turn-announcement--show');
   }
 
-  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.weapons?.detonateSupplyCrates?.(x, y, radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
+  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.weapons?.removeArrowsInBlast?.(x, y, radius); this.weapons?.detonateSupplyCrates?.(x, y, radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
   startDrowning(w) {
-    if (!w.alive || this.trainingFreePractice) return;
+    if (!w.alive) return;
     const remainingHp = Math.max(0, Math.ceil(w.hp));
     w.hp = 0;
     w.pendingHp = 0;
@@ -1215,7 +1221,7 @@ export class Game {
       const w = this.active,
         direction = (this.keys.has('KeyD') || this.keys.has('ArrowRight') ? 1 : 0) - (this.keys.has('KeyA') || this.keys.has('ArrowLeft') ? 1 : 0);
       w.autoHopCooldown = Math.max(0, (w.autoHopCooldown || 0) - dt);
-      const jump = this.keys.delete('KeyW');
+      const jump = this.keys.delete('Space');
       const backflip = w.backflipRequested && this.time <= w.backflipEligibleUntil && !this.weapons.movementMode;
       w.backflipRequested = false;
       // Если боец пошёл, прыгнул или начал заряжать выстрел — скрываем плашку
@@ -1223,12 +1229,13 @@ export class Game {
         this.activeMoved = true;
       }
 
-      if (this.keys.has('ArrowUp') || this.keys.has('ArrowDown')) {
+      if (this.keys.has('KeyW') || this.keys.has('ArrowUp') || this.keys.has('KeyS') || this.keys.has('ArrowDown')) {
         this.activeMoved = true;
       }
       if (direction) {
         w.facing = direction;
         if (Math.cos(this.angle) * direction < 0) this.angle = Math.PI - this.angle;
+        this.angle = clampAimToFacing(this.angle, w.facing);
       }
       if (backflip) {
         this.audio?.play('jump');
@@ -1285,8 +1292,9 @@ export class Game {
           w.grounded = false;
         }
       }
-      if (this.keys.has('ArrowUp')) this.angle += dt;
-      if (this.keys.has('ArrowDown')) this.angle -= dt;
+      const verticalAim = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
+        (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+      if (verticalAim) this.angle = clampAimToFacing(this.angle + verticalAim * (w.facing < 0 ? -1 : 1) * dt, w.facing);
     }
 
     for (const w of this.worms) {
@@ -1340,8 +1348,9 @@ export class Game {
       w.body.applyImpulse(this.motion, false);
     }
     if (this.humanInput() && (this.weapons.burst || this.weapons.flame)) {
-      if (this.keys.has('ArrowUp')) this.angle += dt;
-      if (this.keys.has('ArrowDown')) this.angle -= dt;
+      const w = this.active;
+      const verticalAim = (this.keys.has('ArrowUp') ? 1 : 0) - (this.keys.has('ArrowDown') ? 1 : 0);
+      if (verticalAim) this.angle = clampAimToFacing(this.angle + verticalAim * (w.facing < 0 ? -1 : 1) * dt, w.facing);
     }
     this.weapons.updateMovement(dt);
     this.world.step(this.events);
@@ -1389,10 +1398,10 @@ export class Game {
         continue;
       }
       const waterSurface = this.water?.getHeightAt(w.x) ?? this.baseWaterSurface + this.waterLevel;
-      if (w.y - .45 < waterSurface) {
+      if (w.y - .68 < waterSurface) {
         if (!w.inWater) this.water?.splashAt(w.x, Math.max(Math.abs(w.vy), 1.1), 2.2);
         w.inWater = true;
-        if (!this.trainingFreePractice) this.startDrowning(w);
+        this.startDrowning(w);
         continue;
       }
       w.inWater = false;
@@ -1607,8 +1616,37 @@ export class Game {
     const halfW = (this.camera.right - this.camera.left) / 2 / this.camera.zoom,
       halfH = (this.camera.top - this.camera.bottom) / 2 / this.camera.zoom;
     if (target) {
-      const x = halfW >= MAP.width / 2 ? MAP.width / 2 : THREE.MathUtils.clamp(target.x + cameraPan.x, halfW, MAP.width - halfW),
-        y = halfH >= MAP.height / 2 ? MAP.height / 2 : THREE.MathUtils.clamp(target.y + cameraPan.y, halfH, MAP.height - halfH);
+      let x = halfW >= MAP.width / 2
+          ? MAP.width / 2
+          : THREE.MathUtils.clamp(target.x + cameraPan.x, halfW, MAP.width - halfW),
+        y = halfH >= MAP.height / 2
+          ? THREE.MathUtils.clamp(MAP.height / 2 + cameraPan.y, MAP.height * .25, MAP.height * .75)
+          : THREE.MathUtils.clamp(target.y + cameraPan.y, halfH, MAP.height - halfH);
+      if (this.weaponPanel.open) this.mousePanPosition = null;
+      if (this.mousePanPosition && !this.weaponPanel.open && !this.cameraFocus && !this.weapons.projectile) {
+        const rect = this.canvas.getBoundingClientRect();
+        const edgeZone = Math.min(rect.width, rect.height) * .12;
+        const edgeAxis = (position, start, size) => {
+          if (position < start + edgeZone) return -THREE.MathUtils.clamp((start + edgeZone - position) / edgeZone, 0, 1);
+          if (position > start + size - edgeZone) return THREE.MathUtils.clamp((position - (start + size - edgeZone)) / edgeZone, 0, 1);
+          return 0;
+        };
+        const edgeX = edgeAxis(this.mousePanPosition.x, rect.left, rect.width);
+        const edgeY = edgeAxis(this.mousePanPosition.y, rect.top, rect.height);
+        const panRate = .5;
+        if (edgeX && halfW < MAP.width / 2) {
+          const nextX = THREE.MathUtils.clamp(x + edgeX * halfW * 2 * panRate * dt, halfW, MAP.width - halfW);
+          this.cameraPan.x += nextX - x;
+          x = nextX;
+        }
+        if (edgeY) {
+          const minY = halfH >= MAP.height / 2 ? MAP.height * .25 : halfH;
+          const maxY = halfH >= MAP.height / 2 ? MAP.height * .75 : MAP.height - halfH;
+          const nextY = THREE.MathUtils.clamp(y - edgeY * halfH * 2 * panRate * dt, minY, maxY);
+          this.cameraPan.y += nextY - y;
+          y = nextY;
+        }
+      }
       this.camera.position.x += (x - this.camera.position.x) * smoothing;
       this.camera.position.y += (y - this.camera.position.y) * smoothing;
       if (this.cameraFocus && !this.cameraFocus.supplyCrate && !this.cameraFocus.drowningFocus && !this.cameraFocus.explosionFocus && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
@@ -1780,6 +1818,18 @@ export class Game {
       }
     }
 
+    const shooter = this.active;
+    const weaponVisual = shooter?.duck?.weaponMesh;
+    const weaponIsVisible = shooter?.alive && !this.winner && shooter.recoveryTime <= 0 &&
+      (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT) &&
+      this.weapons.movementMode?.mode !== 'jetPack' && weaponVisual?.visible;
+    if (weaponIsVisible) {
+      const thought = this.weaponArt.thought(this.turn.weapon);
+      const aimedRotation = (shooter.facing > 0 ? this.angle : Math.PI - this.angle) * shooter.facing;
+      const artAngle = thought ? 0 : this.weaponArt.aimArtAngle(this.turn.weapon) * shooter.facing;
+      weaponVisual.rotation.z = (thought ? 0 : aimedRotation - artAngle) - shooter.mesh.rotation.z;
+    }
+
     for (const w of this.worms) if (!w.alive && w.state === 'dead') {
       w.deathTime += dt;
       w.mesh.position.set(w.x, w.y, 0);
@@ -1795,11 +1845,13 @@ export class Game {
       w.mesh.rotation.z += w.deathSpinVelocity * dt;
     }
 
-    const showAim = !!this.active?.alive && !this.winner && !NO_AIM_WEAPONS.has(this.turn.weapon) &&
+    const pointTargeting = this.weapons.usesTarget(this.turn.weapon) &&
+      (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT);
+    const waitingForTarget = pointTargeting && !this.weapons.targetSet;
+    const showAim = !!this.active?.alive && !this.winner && !waitingForTarget && !NO_AIM_WEAPONS.has(this.turn.weapon) &&
       (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT);
     this.aim.visible = showAim;
-    const pointTargeting = this.weapons.usesTarget(this.turn.weapon);
-    this.canvas.style.cursor = showAim && !pointTargeting && !this.weaponPanel.open ? 'none' : '';
+    this.canvas.style.cursor = pointTargeting ? TARGET_CURSOR : 'default';
     const showLaserSight = showAim && !pointTargeting && this.active?.laserSight;
     this.laserSightLine.visible = !!showLaserSight;
 
@@ -1984,13 +2036,13 @@ export class Game {
       if (['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
-      if (e.code === 'KeyW') {
+      if (e.code === 'Space') {
         const w = this.active;
         if (w && this.time - w.jumpTapTime <= .38) w.backflipRequested = true;
         if (w) w.jumpTapTime = this.time;
       }
-      if (e.code === 'Space') { if (!this.weapons.remote()) this.turn.beginCharge(); }
-      if (e.code === 'Enter') this.weapons.dropWeapon();
+      if (e.code === 'Enter') { if (!this.weapons.remote()) this.turn.beginCharge(); }
+      if (e.code === 'KeyX' && this.weapons.movementMode) this.weapons.dropWeapon();
       if (/Digit[1-5]/.test(e.code) && this.turn.state === TURN.WAITING_INPUT) {
         if (this.turn.weapon === 'madCows') this.weapons.cowCount = Number(e.code.slice(-1));
         else this.weapons.fuse = Number(e.code.slice(-1));
@@ -2000,7 +2052,7 @@ export class Game {
     });
     window.addEventListener('keyup', e => {
       this.keys.delete(e.code);
-      if (e.code === 'Space' && this.humanInput()) this.turn.release();
+      if (e.code === 'Enter' && this.humanInput()) this.turn.release();
     });
     window.addEventListener('blur', () => {
       this.keys.clear();
@@ -2029,13 +2081,18 @@ export class Game {
         }
       }
       const rect = this.canvas.getBoundingClientRect();
-      this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
-      if (!this.humanInput() || this.weaponPanel.open || this.turnIntroTime > 0) return;
-      if (!NO_AIM_WEAPONS.has(this.turn.weapon) && (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || this.weapons.flame)) {
-        this.angle = Math.atan2(this.vector.y - this.active.y, this.vector.x - this.active.x);
-        this.active.facing = Math.cos(this.angle) < 0 ? -1 : 1;
-        this.activeMoved = true;
+      if (e.pointerType === 'mouse') {
+        if (this.weaponPanel.open) { this.mousePanPosition = null; return; }
+        const viewWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
+        const viewHeight = (this.camera.top - this.camera.bottom) / this.camera.zoom;
+        const mousePanSensitivity = 2;
+        this.mousePanPosition = { x: e.clientX, y: e.clientY };
+        this.cameraPan.x += e.movementX * viewWidth / rect.width * mousePanSensitivity;
+        this.cameraPan.y -= e.movementY * viewHeight / rect.height * mousePanSensitivity;
       }
+    });
+    this.canvas.addEventListener('pointerleave', e => {
+      if (e.pointerType === 'mouse') this.mousePanPosition = null;
     });
     this.canvas.addEventListener('pointerdown', e => {
       if (e.pointerType === 'touch') {
@@ -2063,7 +2120,9 @@ export class Game {
           this.vector.set((e.clientX - rect.left) / rect.width * 2 - 1, -(e.clientY - rect.top) / rect.height * 2 + 1, 0).unproject(this.camera);
           this.weapons.setTarget(this.vector.x, this.vector.y);
           if (['homing', 'pigeon', 'magicBullet'].includes(this.turn.weapon)) return;
+          if (e.pointerType === 'mouse') { this.turn.beginCharge(); return; }
         }
+        if (e.pointerType === 'mouse') return;
         this.turn.beginCharge();
       }
     });
@@ -2074,7 +2133,7 @@ export class Game {
         if (this.touchPointers.size < 2) this.touchGesture = null;
         if (hadGesture || this.touchPointers.size > 0) return;
       }
-      if (e.button === 0 && this.humanInput()) this.turn.release();
+      if (e.button === 0 && e.pointerType !== 'mouse' && this.humanInput()) this.turn.release();
     });
     this.canvas.addEventListener('pointercancel', e => {
       if (e.pointerType === 'touch') {
@@ -2638,7 +2697,7 @@ export class Game {
     this.matchHud.className = 'match-hud';
     this.matchHud.hidden = true;
     this.matchHudCollapsed = true;
-    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><label class="lighting-test-control"><span>Свет</span><select aria-label="Режим освещения карты"><option value="soft">Мягкий</option><option value="flashlight">Фонарик</option><option value="contour">Контуры</option><option value="warm">Тёплый</option><option value="neon">Неон</option></select></label><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · A/D — ходить · W — прыжок · дважды W — сальто назад · мышь / ↑↓ — прицел · пробел / ЛКМ — огонь · 1–5 — запал</p>';
+    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><label class="lighting-test-control"><span>Свет</span><select aria-label="Режим освещения карты"><option value="soft">Мягкий</option><option value="flashlight">Фонарик</option><option value="contour">Контуры</option><option value="warm">Тёплый</option><option value="neon">Неон</option></select></label><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · ←/→ или A/D — ходить · ↑/↓ или W/S — угол оружия · Пробел — прыжок, дважды — двойной прыжок · мышь — камера · Enter — огонь · 1–5 — запал</p>';
     this.matchHudToggle = document.createElement('button');
     this.matchHudToggle.type = 'button';
     this.matchHudToggle.className = 'match-hud-toggle';
@@ -2778,7 +2837,8 @@ export class Game {
     const turnTime = Number.isFinite(t.remaining) ? `${Math.ceil(t.remaining)} с` : '∞';
     const text = this.winner || `${trainingProgress}${this.teams[t.team].name} · ${turnTime} · ${turnState} · Запал ${this.weapons.fuse} с · ${t.weapon === 'shotgun' ? `Выстрелов: ${t.shots}` : ARSENAL[t.weapon] || t.weapon}`;
     const hints = { girder: 'Прицел — угол; ЛКМ — поставить в свободном месте', girderPack: 'ЛКМ — поставить балку; за ход можно поставить пять', mbBomb: 'ЛКМ — сбросить бомбу сверху', holy: 'Удерживайте пробел — сила броска; взрыв после 3 секунд и остановки', moleBomb: 'Пробел — выпустить, затем начать бурение, затем взорвать', skunk: 'Пробел — выпустить; ещё раз — выпустить газ', salvation: 'Пробел — выпустить; ещё раз — взорвать', superBanana: 'Пробел — бросить; затем разделить; затем взорвать осколки', homing: 'ЛКМ — отметить цель; затем удерживайте пробел для пуска', pigeon: 'ЛКМ — выбрать цель; пробел — выпустить голубя', magicBullet: 'ЛКМ — выбрать цель; пробел — выпустить волшебную пулю', airstrike: 'ЛКМ на карте — вызвать авиаудар', napalm: 'ЛКМ на карте — вызвать огненный удар', mailstrike: 'ЛКМ на карте — вызвать почтовый удар', minestrike: 'ЛКМ на карте — сбросить минное поле', moleSquadron: 'ЛКМ на карте — вызвать эскадрон кротов', donkey: 'ЛКМ на карте — сбросить бетонного осла', indianTest: 'Пробел — поднять воду и заразить незамороженных бойцов', frenchSheep: 'ЛКМ на карте — выбрать точку удара', madCows: '1–5 — размер стада; пробел — выпустить в выбранном направлении', carpet: 'ЛКМ на карте — выбрать зону бомбардировки', armageddon: 'Пробел — метеоритный дождь по всей карте', teleport: 'ЛКМ в свободном месте — телепортироваться', ninjaRope: 'Прицел + пробел — зацепиться; A/D — качаться; W/S — длина; пробел — отпустить', sheep: 'Пробел — выпустить овечку; ещё раз — взорвать', superSheep: 'Пробел — выпустить, затем взлететь, затем взорвать; A/D или ←/→ — поворот', sheepLauncher: 'Пробел — выпустить овечку; ещё раз — взорвать', drill: 'Пробел — бурить вниз', pneumaticDrill: 'Пробел — бурить вниз', blowTorch: 'Пробел — прокладывать горизонтальный тоннель', uppercut: 'Пробел — ударить противника перед собой', mine: 'Пробел — установить мину; затем отойти', dynamite: 'Пробел — установить динамит; затем отойти', jetPack: 'Пробел — включить/снять; W/↑ — тяга вверх, A/D — в стороны; Enter — сбросить оружие', bungee: 'Стрелки — спускаться на банджи', parachute: 'Стрелки — управлять парашютом', fastWalk: 'A/D — двигаться с удвоенной скоростью' };
-    const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте пробел / ЛКМ для силы выстрела' : 'Пробел / ЛКМ — применить оружие');
+    hints.homing = 'ЛКМ — выбрать цель; Enter — выпустить ракету';
+    const hint = this.weapons.message || hints[t.weapon] || (this.weapons.needsCharge(t.weapon) ? 'Удерживайте Enter для силы выстрела' : 'Enter — применить оружие');
     if (this.weaponHint.textContent !== hint) this.weaponHint.textContent = hint;
     if (this.status.textContent !== text) this.status.textContent = text;
     this.chargeBar.value = t.charge;
@@ -2838,6 +2898,18 @@ export class Game {
       const x = (this.vector.x * .5 + .5) * this.width;
       const y = (-this.vector.y * .5 + .5) * this.height;
       w.label.style.transform = `translate3d(${x.toFixed(2)}px,${y.toFixed(2)}px,0) translate(-50%,-100%)`;
+    }
+    for (const p of this.weapons.pool) {
+      if (!p.fuseLabel) continue;
+      const running = p.active && (p.type === 'sheep' ? p.runFuseStarted : p.type === 'sheepLauncher' ? p.stage === 'running' : p.type === 'superSheep' ? p.stage === 'flying' : p.type === 'moleBomb');
+      p.fuseLabel.hidden = !running;
+      if (!running) continue;
+      p.fuseValue.textContent = String(Math.max(0, Math.ceil(p.remaining)));
+      this.vector.set(p.x, p.y + (p.type === 'superSheep' ? 1 : .8), 0);
+      this.vector.project(this.camera);
+      const x = (this.vector.x * .5 + .5) * this.width;
+      const y = (-this.vector.y * .5 + .5) * this.height;
+      p.fuseLabel.style.transform = `translate3d(${x.toFixed(2)}px,${y.toFixed(2)}px,0) translate(-50%,-100%)`;
     }
     for (const w of this.worms) if (w.state === 'drowning' && w.drowningDamagePopup) {
       const popupRise = Math.min(w.drowningTime * .8, 1.4);

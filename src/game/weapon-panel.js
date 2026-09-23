@@ -29,7 +29,7 @@ export class WeaponPanel {
     this.root.id = 'weapon-panel';
     this.root.hidden = true;
     this.root.setAttribute('aria-label', 'Арсенал');
-    this.root.innerHTML = '<header><strong>АРСЕНАЛ</strong><button type="button" class="weapon-panel-close" aria-label="Закрыть арсенал">×</button></header><div class="weapon-grid"></div><p class="weapon-panel-caption" aria-live="polite">Выберите оружие</p>';
+    this.root.innerHTML = '<header><strong>АРСЕНАЛ</strong><button type="button" class="weapon-panel-close" aria-label="Закрыть арсенал">×</button></header><div class="weapon-grid"></div><p class="weapon-panel-caption" aria-live="polite">Выберите оружие</p><section class="weapon-angle-tuner" aria-label="Настройка угла текстуры"><strong>Угол текстуры</strong><div class="weapon-angle-row"><select class="weapon-angle-select" aria-label="Оружие для настройки"></select><output class="weapon-angle-value">0°</output></div><div class="weapon-angle-row weapon-angle-controls"><button type="button" data-angle-step="-10">−10°</button><button type="button" data-angle-step="-1">−1°</button><input class="weapon-angle-range" type="range" min="-180" max="180" step="1" aria-label="Угол текстуры"><button type="button" data-angle-step="1">+1°</button><button type="button" data-angle-step="10">+10°</button></div><div class="weapon-angle-row weapon-angle-actions"><button type="button" class="weapon-angle-reset">Сбросить угол</button><button type="button" class="weapon-angle-copy">Копировать данные</button></div><textarea class="weapon-angle-data" readonly aria-label="Сохранённые углы оружия" hidden></textarea><span class="weapon-angle-status" aria-live="polite">Автосохранение включено</span></section>';
     const grid = this.root.querySelector('.weapon-grid');
     this.caption = this.root.querySelector('.weapon-panel-caption');
     for (const [label, ...ids] of GROUPS) {
@@ -77,6 +77,7 @@ export class WeaponPanel {
       }
     }
     this.buttons = this.root.querySelectorAll('[data-weapon]');
+    this.setupAngleTuner();
     this.root.querySelector('.weapon-panel-close').addEventListener('click', () => this.close(true));
     this.root.addEventListener('contextmenu', e => { e.preventDefault(); this.close(); });
     toggle.setAttribute('aria-controls', this.root.id);
@@ -85,17 +86,90 @@ export class WeaponPanel {
     document.querySelector('#game-root').append(this.root);
   }
   get open() { return !this.root.hidden; }
+  setupAngleTuner() {
+    this.angleSelect = this.root.querySelector('.weapon-angle-select');
+    this.angleRange = this.root.querySelector('.weapon-angle-range');
+    this.angleValue = this.root.querySelector('.weapon-angle-value');
+    this.anglePreview = this.root.querySelector('.weapon-angle-preview');
+    this.angleData = this.root.querySelector('.weapon-angle-data');
+    this.angleStatus = this.root.querySelector('.weapon-angle-status');
+    for (const [id, name] of Object.entries(ARSENAL)) {
+      const option = document.createElement('option'); option.value = id; option.textContent = name; this.angleSelect.append(option);
+    }
+    const currentWeapon = this.game.turn?.weapon;
+    this.angleSelect.value = currentWeapon in ARSENAL ? currentWeapon : Object.keys(ARSENAL)[0];
+    this.angleSelect.addEventListener('change', () => {
+      this.game.turn.weapon = this.angleSelect.value;
+      this.refreshAngleTuner();
+    });
+    this.angleRange.addEventListener('input', () => this.setAngle(this.angleRange.value));
+    this.root.querySelectorAll('[data-angle-step]').forEach(button => button.addEventListener('click', () => {
+      this.setAngle(Number(this.angleRange.value) + Number(button.dataset.angleStep));
+    }));
+    this.root.querySelector('.weapon-angle-reset').addEventListener('click', () => {
+      const type = this.angleSelect.value;
+      this.setAngle(this.game.weaponArt.defaultAimArtAngle(type));
+    });
+    this.root.querySelector('.weapon-angle-copy').addEventListener('click', () => this.copyAimAngles());
+    this.refreshAngleTuner();
+  }
+  refreshAngleTuner() {
+    const weaponArt = this.game.weaponArt;
+    if (!weaponArt) return;
+    const type = this.angleSelect.value;
+    const angle = weaponArt.aimArtAngle(type) * 180 / Math.PI;
+    this.angleRange.value = String(Math.round(angle));
+    this.angleValue.value = `${angle.toFixed(1)}°`;
+    this.angleValue.textContent = `${angle.toFixed(1)}°`;
+    this.anglePreview?.remove();
+    const icon = this.root.querySelector(`[data-weapon="${type}"] .weapon-icon`)?.cloneNode(true);
+    if (icon) {
+      icon.classList.add('weapon-angle-preview');
+      icon.style.transform = `rotate(${-angle}deg)`;
+      this.angleSelect.parentElement.prepend(icon);
+      this.anglePreview = icon;
+    }
+    this.angleStatus.textContent = 'Автосохранение включено';
+  }
+  setAngle(angle) {
+    const type = this.angleSelect.value;
+    const value = this.game.weaponArt.setAimArtAngle(type, angle);
+    this.refreshAngleTuner();
+    this.angleStatus.textContent = `Сохранено: ${ARSENAL[type]} · ${value.toFixed(1)}°`;
+  }
+  async copyAimAngles() {
+    const data = JSON.stringify(this.game.weaponArt.aimArtAngles(), null, 2);
+    this.angleData.hidden = false;
+    this.angleData.value = data;
+    try {
+      await navigator.clipboard.writeText(data);
+      this.angleStatus.textContent = 'Данные скопированы';
+    } catch {
+      this.angleData.focus(); this.angleData.select();
+      const copied = document.execCommand('copy');
+      this.angleStatus.textContent = copied ? 'Данные скопированы' : 'Выделите текст и скопируйте вручную';
+    }
+  }
   canSelect() { const g = this.game; return (g.gameMode !== 'training' || g.trainingFreePractice) && g.humanInput() && g.turn.state === 'WAITING_INPUT' && !g.turn.lockedWeapon; }
   flip() {
     if (this.open) { this.close(); return; }
     if (!this.canSelect()) return;
     this.game.keys.clear();
     this.owner = this.game.active;
+    this.weaponBeforeAnglePreview = this.game.turn.weapon;
+    if (this.angleSelect && this.game.turn.weapon in ARSENAL) {
+      this.angleSelect.value = this.game.turn.weapon;
+      this.refreshAngleTuner();
+    }
     this.refresh();
     this.root.hidden = false;
     this.toggle.setAttribute('aria-expanded', 'true');
   }
   close(focus = false) {
+    if (this.weaponBeforeAnglePreview) {
+      this.game.turn.weapon = this.weaponBeforeAnglePreview;
+      this.weaponBeforeAnglePreview = null;
+    }
     this.root.hidden = true;
     this.toggle.setAttribute('aria-expanded', 'false');
     if (focus) this.toggle.focus();
@@ -105,6 +179,7 @@ export class WeaponPanel {
     if (!this.canSelect()) return;
     if (!this.game.canUseWeapon(id)) return;
     this.game.turn.weapon = id;
+    this.weaponBeforeAnglePreview = null;
     this.game.activeMoved = true;
     this.game.weapons.resetTarget();
     this.close();

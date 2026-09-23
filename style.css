@@ -2028,6 +2028,13 @@ button {
   box-shadow: inset 0 0 0 1px #193c4a, 0 3px 10px #0006;
 }
 
+.sheep-fuse-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+}
+
 .jetpack-fuel-indicator[hidden] {
   display: none;
 }
@@ -2501,6 +2508,97 @@ button {
   line-height: 1.4;
   color: #ffd166;
   border-top: 1px solid #4d5657;
+}
+
+.weapon-angle-tuner {
+  flex: 0 0 auto;
+  display: grid;
+  gap: 5px;
+  padding: 7px;
+  border-top: 1px solid #4d5657;
+  background: #101619;
+  font-size: 11px;
+}
+
+.weapon-angle-tuner > strong {
+  color: #ffd166;
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.weapon-angle-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.weapon-angle-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 27px;
+  color: #e8f5f3;
+  background: #18262c;
+  border: 1px solid #52636a;
+  font: inherit;
+}
+
+.weapon-angle-preview {
+  flex: 0 0 30px;
+  width: 30px;
+  height: 30px;
+  overflow: visible;
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.weapon-angle-value {
+  flex: 0 0 42px;
+  color: #fff;
+  text-align: right;
+  font: 11px monospace;
+}
+
+.weapon-angle-controls button,
+.weapon-angle-actions button {
+  min-height: 27px;
+  padding: 2px 5px;
+  color: #e8f5f3;
+  background: #243e50;
+  border: 1px solid #52636a;
+  font: 10px monospace;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.weapon-angle-controls input {
+  flex: 1 1 auto;
+  min-width: 32px;
+  accent-color: #ffd166;
+}
+
+.weapon-angle-actions button:last-child {
+  color: #111;
+  background: #ffd166;
+  border-color: #ffd166;
+}
+
+.weapon-angle-status {
+  min-height: 13px;
+  color: #aebbb8;
+  font-size: 10px;
+}
+
+.weapon-angle-data {
+  box-sizing: border-box;
+  width: 100%;
+  max-height: 95px;
+  resize: vertical;
+  color: #d8e4df;
+  background: #080b0e;
+  border: 1px solid #52636a;
+  font: 9px/1.25 monospace;
 }
 
 .weapon-row {

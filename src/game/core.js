@@ -4,6 +4,11 @@ export const TURN = Object.freeze({ WAITING_INPUT: 'WAITING_INPUT', CHARGING_SHO
 export const GRAVITY = -12;
 export const WIND_MAX = 3;
 export const COLORS = [0x55d9ba, 0xff867b, 0xa995ff, 0xffd166, 0x63c5ff, 0xf58cda];
+const WEAPONS_WITH_CUSTOM_SHOT_SFX = new Set([
+  'shotgun', 'handgun', 'uzi', 'minigun', 'longbow', 'mortar', 'firePunch',
+  'homing', 'pigeon', 'magicBullet', 'airstrike', 'napalm', 'mailstrike',
+  'minestrike', 'moleSquadron', 'frenchSheep', 'carpet', 'armageddon', 'donkey', 'mbBomb',
+]);
 const shuffledIndexes = length => {
   const result = Array.from({ length }, (_, index) => index);
   for (let i = result.length - 1; i > 0; i--) {
@@ -104,13 +109,13 @@ export class TurnMachine {
     this.game.cameraFocus = null;
     this.state = TURN.ACTION_RESOLVING;
     if (this.game.weapons.fire(usedWeapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
-    this.game.audio?.play('energyShot');
+    if (!WEAPONS_WITH_CUSTOM_SHOT_SFX.has(usedWeapon)) this.game.audio?.play('energyShot');
     if (!this.weaponConsumed) {
       this.game.consumeWeapon(usedWeapon);
       this.weaponConsumed = true;
     }
     if (this.state === TURN.ACTION_RESOLVING || this.state === TURN.SETTLING) {
-      if (!this.game.weapons.drilling && !['skipGo', 'surrender', 'freeze', 'selectWorm', 'scales', 'teleport', 'girder', 'girderPack'].includes(usedWeapon)) this.game.weapons.retreat = Math.max(this.game.weapons.retreat, 3);
+      if (!this.game.weapons.drilling && !['skipGo', 'surrender', 'freeze', 'selectWorm', 'scales', 'teleport', 'girder', 'girderPack', 'firePunch'].includes(usedWeapon)) this.game.weapons.retreat = Math.max(this.game.weapons.retreat, 3);
       if (usedWeapon !== 'freeze' && usedWeapon !== 'invisibility') for (const worm of this.game.teams[this.team].worms) worm.invisible = false;
     }
     if (this.game.returnToBazooka) {
