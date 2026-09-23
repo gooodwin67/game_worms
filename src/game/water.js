@@ -53,7 +53,8 @@ export class Water {
         uBottomY: { value: bottomY },
         uSurfaceY: { value: surfaceY },
         uDeepColor: { value: new THREE.Color('#126b91') },
-        uShallowColor: { value: new THREE.Color('#35a8c7') }
+        uShallowColor: { value: new THREE.Color('#35a8c7') },
+        uMoonX: { value: MAP.width * .72 }
       },
       vertexShader: `
         varying float vWorldY;
@@ -70,6 +71,7 @@ export class Water {
         uniform float uSurfaceY;
         uniform vec3 uDeepColor;
         uniform vec3 uShallowColor;
+        uniform float uMoonX;
         varying float vWorldY;
         varying vec2 vWorldPosition;
 
@@ -94,6 +96,14 @@ export class Water {
           color *= 1.0 - clamp(darkPatches, 0.0, 1.15) * surfaceProtection * .14;
           float deepPulse = .5 + .5 * sin(x * .18 - uTime * .12 + vWorldY * .45);
           color += vec3(.025, .055, .065) * deepPulse * (1.0 - depth);
+          float reflectionWidth = exp(-pow((x - uMoonX) / 7.4, 2.0));
+          float reflectionWave = .5 + .5 * sin(x * 4.4 - uTime * .55 + vWorldY * 2.6);
+          float reflectionBreakup = .5 + .5 * sin(x * 1.35 + vWorldY * 5.2 + sin(vWorldY * 2.1));
+          float moonReflection = reflectionWidth * pow(depth, .72);
+          moonReflection *= .12 + reflectionWave * .48 + reflectionBreakup * .40;
+          color += vec3(.30, .32, .22) * moonReflection;
+          float surfaceGlint = exp(-pow((vWorldY - uSurfaceY) * 2.8, 2.0)) * (.5 + .5 * sin(x * 1.8 - uTime * .35));
+          color += vec3(.025, .07, .08) * surfaceGlint;
           gl_FragColor = vec4(color, .88);
         }
       `,
