@@ -3701,4 +3701,8 @@ button {
     top: max(8px, env(safe-area-inset-top));
     max-height: calc(100dvh - 16px);
   }
+
+  .weapon-angle-tuner {
+    display: none;
+  }
 }
