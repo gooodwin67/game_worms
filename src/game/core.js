@@ -5,9 +5,9 @@ export const GRAVITY = -12;
 export const WIND_MAX = 3;
 export const COLORS = [0x55d9ba, 0xff867b, 0xa995ff, 0xffd166, 0x63c5ff, 0xf58cda];
 const WEAPONS_WITH_CUSTOM_SHOT_SFX = new Set([
-  'shotgun', 'handgun', 'uzi', 'minigun', 'longbow', 'mortar', 'firePunch',
+  'shotgun', 'handgun', 'uzi', 'minigun', 'longbow', 'bazooka', 'mortar', 'firePunch',
   'homing', 'pigeon', 'magicBullet', 'airstrike', 'napalm', 'mailstrike',
-  'minestrike', 'moleSquadron', 'frenchSheep', 'carpet', 'armageddon', 'donkey', 'mbBomb',
+  'minestrike', 'moleBomb', 'moleSquadron', 'frenchSheep', 'carpet', 'armageddon', 'donkey', 'mbBomb',
 ]);
 const shuffledIndexes = length => {
   const result = Array.from({ length }, (_, index) => index);
@@ -109,7 +109,10 @@ export class TurnMachine {
     this.game.cameraFocus = null;
     this.state = TURN.ACTION_RESOLVING;
     if (this.game.weapons.fire(usedWeapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
-    if (!WEAPONS_WITH_CUSTOM_SHOT_SFX.has(usedWeapon)) this.game.audio?.play('energyShot');
+    if (!WEAPONS_WITH_CUSTOM_SHOT_SFX.has(usedWeapon)) {
+      const launchAudio = this.game.audio?.play('energyShot');
+      this.game.weapons.attachLaunchAudio(this.game.weapons.lastSpawnedProjectile, launchAudio);
+    }
     if (!this.weaponConsumed) {
       this.game.consumeWeapon(usedWeapon);
       this.weaponConsumed = true;
@@ -149,7 +152,9 @@ export class TurnMachine {
       }
       this.still = stable ? this.still + dt : 0;
       if (this.still >= 0.6 && this.game.damageDisplayTime <= 0 && this.game.damagePresentationComplete()) {
-        if ((this.weapon === 'shotgun' || this.weapon === 'longbow') && this.shots > 0 && this.remaining > 0 && this.game.active.alive) this.state = TURN.WAITING_INPUT;
+        if ((this.weapon === 'shotgun' || this.weapon === 'longbow') && this.shots > 0 && this.remaining > 0 && this.game.active.alive) {
+          this.state = TURN.WAITING_INPUT;
+        }
         else this.state = TURN.NEXT_TURN;
       }
     }

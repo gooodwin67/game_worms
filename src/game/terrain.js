@@ -41,6 +41,10 @@ export class Terrain {
     this.colorCanvas.height = this.canvas.height;
     this.colorCtx = this.colorCanvas.getContext('2d');
     this.colorCtx.drawImage(this.canvas, 0, 0);
+    this.blastRimCanvas = document.createElement('canvas');
+    this.blastRimCanvas.width = this.canvas.width;
+    this.blastRimCanvas.height = this.canvas.height;
+    this.blastRimCtx = this.blastRimCanvas.getContext('2d');
 
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.minFilter = THREE.LinearFilter;
@@ -50,12 +54,17 @@ export class Terrain {
     this.colorTexture.minFilter = THREE.LinearFilter;
     this.colorTexture.magFilter = THREE.LinearFilter;
     this.colorTexture.generateMipmaps = false;
+    this.blastRimTexture = new THREE.CanvasTexture(this.blastRimCanvas);
+    this.blastRimTexture.minFilter = THREE.LinearFilter;
+    this.blastRimTexture.magFilter = THREE.LinearFilter;
+    this.blastRimTexture.generateMipmaps = false;
 
     // Шейдер: если карта из файла — берет её оригинальный цвет, иначе процедурную траву
     this.material = new THREE.ShaderMaterial({
       uniforms: {
         mask: { value: this.texture },
         colorMap: { value: this.colorTexture },
+        blastRim: { value: this.blastRimTexture },
         mapSize: { value: new THREE.Vector2(this.canvas.width, this.canvas.height) },
         useCustomTexture: { value: this.hasCustomImage ? 1.0 : 0.0 },
         lightPos: { value: new THREE.Vector2(MAP.width * .5, MAP.height * .78) },
@@ -66,6 +75,7 @@ export class Terrain {
         particleLightPos: { value: Array.from({ length: MAX_PARTICLE_GLINTS }, () => new THREE.Vector2()) },
         particleLightColor: { value: Array.from({ length: MAX_PARTICLE_GLINTS }, () => new THREE.Color()) },
         particleLightStrength: { value: new Float32Array(MAX_PARTICLE_GLINTS) },
+        particleLightRadius: { value: new Float32Array(MAX_PARTICLE_GLINTS) },
         particleLightCount: { value: 0 }
       },
       vertexShader: `
@@ -80,6 +90,7 @@ export class Terrain {
       fragmentShader: `
         uniform sampler2D mask;
         uniform sampler2D colorMap;
+        uniform sampler2D blastRim;
         uniform vec2 mapSize;
         uniform float useCustomTexture;
         uniform vec2 lightPos;
@@ -90,6 +101,7 @@ export class Terrain {
         uniform vec2 particleLightPos[12];
         uniform vec3 particleLightColor[12];
         uniform float particleLightStrength[12];
+        uniform float particleLightRadius[12];
         uniform float particleLightCount;
         varying vec2 vUv;
         varying vec2 vWorldPos;
@@ -119,14 +131,6 @@ export class Terrain {
           if (sampleCenter.a < 0.4) discard;
           float edgeAlpha = smoothstep(0.4, 0.7, sampleCenter.a);
 
-          // Проверка окружающих пикселей для контура среза взрыва
-          float sampleSurround = (
-            texture2D(mask, vUv + vec2(px.x * 2.0, 0.0)).a +
-            texture2D(mask, vUv - vec2(px.x * 2.0, 0.0)).a +
-            texture2D(mask, vUv + vec2(0.0, px.y * 2.0)).a +
-            texture2D(mask, vUv - vec2(0.0, px.y * 2.0)).a
-          ) * 0.25;
-
           // Псевдорельеф из яркости соседних пикселей — аналог bump map из SVG-фильтра.
           vec4 sampleLeft = texture2D(mask, vUv - vec2(px.x * 3.0, 0.0));
           vec4 sampleRight = texture2D(mask, vUv + vec2(px.x * 3.0, 0.0));
@@ -138,21 +142,21 @@ export class Terrain {
           float bumpRight = dot(sampleRight.rgb, luminance) * sampleRight.a;
           float bumpDown = dot(sampleDown.rgb, luminance) * sampleDown.a;
           float bumpUp = dot(sampleUp.rgb, luminance) * sampleUp.a;
-          vec3 normal = normalize(vec3((bumpLeft - bumpRight) * 2.6, (bumpDown - bumpUp) * 2.6, .85));
+          // Усиливаем производные яркости текстуры, чтобы каменная поверхность
+          // реагировала на свет как мелкий рельеф, а не оставалась плоской картинкой.
+          vec3 normal = normalize(vec3((bumpLeft - bumpRight) * 3.0, (bumpDown - bumpUp) * 3.0, .95));
           vec3 lightDirection = normalize(vec3(lightPos - vWorldPos, lightHeight));
           float diffuse = max(dot(normal, lightDirection), 0.0);
           vec3 reflected = reflect(-lightDirection, normal);
           float specular = pow(max(reflected.z, 0.0), 28.0);
 
           vec3 finalColor;
+          float blastRimAmount = texture2D(blastRim, vUv).a;
 
           if (useCustomTexture > 0.5) {
             // Берем оригинальные цвета картинки
             finalColor = colorCenter.rgb;
 
-            // Тёмная окантовка на срезах взрывов и по краям острова
-            float edgeDarkening = smoothstep(0.4, 0.95, sampleSurround);
-            finalColor *= mix(0.35, 1.0, edgeDarkening);
           } else {
             // Процедурный грунт для стандартного режима
             float strata = noise(vec2(vWorldPos.x * 0.3, vWorldPos.y * 0.8));
@@ -163,15 +167,26 @@ export class Terrain {
             vec3 grassColor = mix(vec3(0.24, 0.65, 0.22), vec3(0.48, 0.85, 0.32), noise(vWorldPos * 3.0));
 
             finalColor = mix(soil, grassColor, smoothstep(0.35, 0.8, grassMask));
-            finalColor *= mix(0.7, 1.0, sampleSurround);
           }
+
+          // Кромка рисуется отдельной маской взрывов, поэтому естественные края
+          // карты не затемняются вместе с кратерами.
+          float rimVariation = noise(vWorldPos * vec2(11.0, 17.0));
+          vec3 exposedSoil = mix(vec3(.22, .14, .10), vec3(.39, .25, .15), rimVariation);
+          finalColor = mix(finalColor, exposedSoil, blastRimAmount * .68);
+          finalColor *= mix(1.0, .35, blastRimAmount);
+
+          // Общее освещение применяется и к пользовательской текстуре: раньше
+          // вычислялся рельефный normal, но исходное изображение им не затенялось.
+          float terrainLight = 0.84 + diffuse * 0.16;
+          finalColor *= terrainLight;
 
           // Слабые локальные блики от разлетающихся частиц взрыва.
           // Ограниченное число источников сохраняет стоимость шейдера предсказуемой.
           for (int i = 0; i < 12; i++) {
             float enabled = step(float(i) + .5, particleLightCount);
             float particleDistance = distance(particleLightPos[i], vWorldPos);
-            float particleRadius = lightMode == 1 ? 2.4 : lightMode == 2 ? 3.1 : lightMode == 3 ? 5.4 : lightMode == 4 ? 4.2 : 6.0;
+            float particleRadius = particleLightRadius[i];
             float particleFalloff = (1.0 - smoothstep(.08, particleRadius, particleDistance)) * enabled;
             vec3 particleDirection = normalize(vec3(particleLightPos[i] - vWorldPos, 2.2));
             float particleDiffuse = max(dot(normal, particleDirection), 0.0);
@@ -447,24 +462,33 @@ export class Terrain {
     const positions = this.material.uniforms.particleLightPos.value;
     const colors = this.material.uniforms.particleLightColor.value;
     const strengths = this.material.uniforms.particleLightStrength.value;
+    const radii = this.material.uniforms.particleLightRadius.value;
+    const lightMode = this.material.uniforms.lightMode.value;
+    const defaultRadius = lightMode === 1 ? 2.4 : lightMode === 2 ? 3.1 : lightMode === 3 ? 5.4 : lightMode === 4 ? 4.2 : 6.0;
     let count = 0;
     for (const data of sources) {
       let sourceCount = 0;
       const sourceLimit = Math.ceil(MAX_PARTICLE_GLINTS / sources.length);
-      while (data && sourceCount < Math.min(data.count || 0, sourceLimit) && count < MAX_PARTICLE_GLINTS) {
-        const position = data.positions[sourceCount];
-        const color = data.colors[sourceCount];
-        const strength = data.strengths[sourceCount];
+      const available = data?.count || 0;
+      const takeCount = Math.min(available, sourceLimit, MAX_PARTICLE_GLINTS - count);
+      while (data && sourceCount < takeCount) {
+        // Sources may contain more lights than the terrain shader can process.
+        // Sample across the whole set instead of always taking its first entries.
+        const sourceIndex = Math.floor(sourceCount * available / takeCount);
+        const position = data.positions[sourceIndex];
+        const color = data.colors[sourceIndex];
+        const strength = data.strengths[sourceIndex];
         sourceCount++;
         if (!position || !color || !Number.isFinite(position.x) || !Number.isFinite(position.y) || !Number.isFinite(strength) || strength <= 0) continue;
         positions[count].copy(position);
         colors[count].copy(color);
         strengths[count] = strength;
+        radii[count] = defaultRadius * (data.radiusScale || 1);
         count++;
       }
     }
     for (let i = 0; i < MAX_PARTICLE_GLINTS; i++) {
-      if (i >= count) strengths[i] = 0;
+      if (i >= count) { strengths[i] = 0; radii[i] = defaultRadius; }
     }
     this.material.uniforms.particleLightCount.value = count;
   }
@@ -550,10 +574,67 @@ export class Terrain {
     }
     c.globalCompositeOperation = 'destination-out';
     c.beginPath();
-    c.arc(px, py, r, 0, Math.PI * 2);
+    const roughnessPoints = Array.from({ length: 32 }, () => (Math.random() - .5) * .11);
+    const pointCount = Math.max(36, Math.min(96, Math.round(r * 1.4)));
+    const edgePoints = [];
+    for (let i = 0; i <= pointCount; i++) {
+      const angle = i / pointCount * Math.PI * 2;
+      const controlPosition = i / pointCount * roughnessPoints.length;
+      const controlIndex = Math.floor(controlPosition) % roughnessPoints.length;
+      const nextIndex = (controlIndex + 1) % roughnessPoints.length;
+      const blend = controlPosition - Math.floor(controlPosition);
+      const smoothBlend = blend * blend * (3 - 2 * blend);
+      const offset = THREE.MathUtils.lerp(roughnessPoints[controlIndex], roughnessPoints[nextIndex], smoothBlend);
+      const edgeRadius = r * (1 + offset);
+      const edgeX = px + Math.cos(angle) * edgeRadius;
+      const edgeY = py + Math.sin(angle) * edgeRadius;
+      edgePoints.push([edgeX, edgeY]);
+      if (i === 0) c.moveTo(edgeX, edgeY);
+      else c.lineTo(edgeX, edgeY);
+    }
+    c.closePath();
     c.fill();
     c.globalCompositeOperation = 'source-over';
     this.texture.needsUpdate = true;
+    this.blastRimCtx.beginPath();
+    edgePoints.forEach(([edgeX, edgeY], index) => {
+      if (index === 0) this.blastRimCtx.moveTo(edgeX, edgeY);
+      else this.blastRimCtx.lineTo(edgeX, edgeY);
+    });
+    this.blastRimCtx.closePath();
+    this.blastRimCtx.strokeStyle = 'rgba(255, 255, 255, .95)';
+    this.blastRimCtx.lineWidth = this.scale * .375;
+    this.blastRimCtx.lineJoin = 'round';
+    this.blastRimCtx.stroke();
+    this.blastRimTexture.needsUpdate = true;
+    if (this.hasCustomImage && radius >= 1.5) {
+      // Трещины добавляются только крупным взрывам, не мини-взрывам и бурению.
+      const crackCount = Math.max(24, Math.min(54, Math.round(radius * 8.4)));
+      this.colorCtx.save();
+      this.colorCtx.strokeStyle = 'rgba(27, 19, 16, .72)';
+      this.colorCtx.lineWidth = Math.max(.75, this.scale * .05);
+      this.colorCtx.lineCap = 'square';
+      this.colorCtx.lineJoin = 'miter';
+      for (let i = 0; i < crackCount; i++) {
+        const angle = (i / crackCount) * Math.PI * 2 + (Math.random() - .5) * .42;
+        const length = this.scale * (.32 + Math.random() * .48);
+        const startRadius = r * (.99 + Math.random() * .04);
+        const segmentCount = 4 + Math.floor(Math.random() * 4);
+        let sideways = 0;
+        this.colorCtx.beginPath();
+        this.colorCtx.moveTo(px + Math.cos(angle) * startRadius, py + Math.sin(angle) * startRadius);
+        for (let segment = 1; segment <= segmentCount; segment++) {
+          sideways += (Math.random() - .5) * this.scale * .16;
+          const distance = startRadius + length * (segment / segmentCount);
+          const pointX = px + Math.cos(angle) * distance - Math.sin(angle) * sideways;
+          const pointY = py + Math.sin(angle) * distance + Math.cos(angle) * sideways;
+          this.colorCtx.lineTo(pointX, pointY);
+        }
+        this.colorCtx.stroke();
+      }
+      this.colorCtx.restore();
+      this.colorTexture.needsUpdate = true;
+    }
     const size = MAP.chunk;
     for (let cy = Math.max(0, Math.floor((py - r - 1) / size)); cy <= Math.min(this.rows - 1, Math.floor((py + r + 1) / size)); cy++) {
       for (let cx = Math.max(0, Math.floor((px - r - 1) / size)); cx <= Math.min(this.columns - 1, Math.floor((px + r + 1) / size)); cx++) {
@@ -566,16 +647,66 @@ export class Terrain {
   }
 
   createGirder(x, y, angle, length) {
+    const normalX = Math.sin(angle), normalY = Math.cos(angle);
+    const startX = (x - Math.cos(angle) * length / 2) * this.scale;
+    const startY = (MAP.height - (y - Math.sin(angle) * length / 2)) * this.scale;
+    const endX = (x + Math.cos(angle) * length / 2) * this.scale;
+    const endY = (MAP.height - (y + Math.sin(angle) * length / 2)) * this.scale;
+    const middleX = (startX + endX) / 2, middleY = (startY + endY) / 2;
     for (const c of [this.ctx, this.colorCtx]) {
       c.save();
       c.globalCompositeOperation = 'source-over';
-      c.strokeStyle = '#8b5a2b';
+      c.lineCap = 'square';
+      c.lineJoin = 'bevel';
+      c.strokeStyle = '#202a31';
+      c.lineWidth = .46 * this.scale;
+      c.beginPath(); c.moveTo(startX, startY); c.lineTo(endX, endY); c.stroke();
+
+      const steel = c.createLinearGradient(
+        middleX + normalX * .17 * this.scale, middleY + normalY * .17 * this.scale,
+        middleX - normalX * .17 * this.scale, middleY - normalY * .17 * this.scale
+      );
+      steel.addColorStop(0, '#d1dadd');
+      steel.addColorStop(.28, '#83949d');
+      steel.addColorStop(.58, '#aebbc0');
+      steel.addColorStop(1, '#485860');
+      c.strokeStyle = steel;
       c.lineWidth = .34 * this.scale;
-      c.lineCap = 'round';
-      c.beginPath();
-      c.moveTo((x - Math.cos(angle) * length / 2) * this.scale, (MAP.height - (y - Math.sin(angle) * length / 2)) * this.scale);
-      c.lineTo((x + Math.cos(angle) * length / 2) * this.scale, (MAP.height - (y + Math.sin(angle) * length / 2)) * this.scale);
-      c.stroke();
+      c.beginPath(); c.moveTo(startX, startY); c.lineTo(endX, endY); c.stroke();
+
+      c.strokeStyle = '#34434a';
+      c.lineWidth = .075 * this.scale;
+      c.beginPath(); c.moveTo(startX, startY); c.lineTo(endX, endY); c.stroke();
+
+      for (const side of [-1, 1]) {
+        const offsetX = normalX * side * .12 * this.scale;
+        const offsetY = normalY * side * .12 * this.scale;
+        c.strokeStyle = side > 0 ? '#e0e6e6' : '#68777d';
+        c.lineWidth = .045 * this.scale;
+        c.beginPath();
+        c.moveTo(startX + offsetX, startY + offsetY);
+        c.lineTo(endX + offsetX, endY + offsetY);
+        c.stroke();
+        c.strokeStyle = '#27343a';
+        c.lineWidth = .015 * this.scale;
+        c.beginPath();
+        c.moveTo(startX + offsetX - normalX * .025 * this.scale, startY + offsetY - normalY * .025 * this.scale);
+        c.lineTo(endX + offsetX - normalX * .025 * this.scale, endY + offsetY - normalY * .025 * this.scale);
+        c.stroke();
+      }
+
+      for (let t = .1; t < .95; t += .13) {
+        const boltX = startX + (endX - startX) * t;
+        const boltY = startY + (endY - startY) * t;
+        for (const side of [-1, 1]) {
+          const bx = boltX + normalX * side * .12 * this.scale;
+          const by = boltY + normalY * side * .12 * this.scale;
+          c.beginPath(); c.arc(bx, by, .045 * this.scale, 0, Math.PI * 2);
+          c.fillStyle = '#28343a'; c.fill();
+          c.beginPath(); c.arc(bx - .01 * this.scale, by - .01 * this.scale, .022 * this.scale, 0, Math.PI * 2);
+          c.fillStyle = '#e2e8e8'; c.fill();
+        }
+      }
       c.restore();
     }
     this.texture.needsUpdate = true;
@@ -589,5 +720,6 @@ export class Terrain {
     this.material.dispose();
     this.texture.dispose();
     this.colorTexture.dispose();
+    this.blastRimTexture.dispose();
   }
 }

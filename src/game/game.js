@@ -14,12 +14,18 @@ const TARGET_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/
 const NO_AIM_WEAPONS = new Set([
   'skipGo', 'surrender', 'selectWorm', 'freeze', 'scales', 'lowGravity', 'fastWalk', 'laserSight', 'invisibility',
   'firePunch', 'battleAxe', 'baseballBat', 'prod', 'kamikaze', 'suicideBomber', 'earthquake',
-  'drill', 'pneumaticDrill', 'blowTorch', 'mine', 'dynamite', 'bungee', 'parachute', 'jetPack', 'uppercut'
+  'drill', 'pneumaticDrill', 'mine', 'dynamite', 'bungee', 'parachute', 'jetPack', 'uppercut'
 ]);
 function clampAimToFacing(angle, facing) {
   const forward = facing < 0 ? Math.PI : 0;
   const offset = Math.atan2(Math.sin(angle - forward), Math.cos(angle - forward));
   return forward + THREE.MathUtils.clamp(offset, -Math.PI / 2, Math.PI / 2);
+}
+function clampAimForWeapon(angle, facing, weapon) {
+  if (weapon !== 'blowTorch') return clampAimToFacing(angle, facing);
+  const forward = facing < 0 ? Math.PI : 0;
+  const offset = Math.atan2(Math.sin(angle - forward), Math.cos(angle - forward));
+  return forward + THREE.MathUtils.clamp(offset, facing < 0 ? -Math.PI / 2 : -Math.PI / 4, facing < 0 ? Math.PI / 4 : Math.PI / 2);
 }
 const TRAINING_SCENARIOS = Object.freeze({
   free: { map: 'free', mode: 'free', indestructible: false },
@@ -273,9 +279,9 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.cameraPan = { x: 0, y: 0 }; this.touchPointers = new Map(); this.touchGesture = null; this.mobileControls = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
+    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.cameraFocus = null; this.cameraPan = { x: 0, y: 0 }; this.mouseCameraOverrideUntil = 0; this.touchPointers = new Map(); this.touchGesture = null; this.mobileControls = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
-    this.inMenu = true; this.installMobileControls(); this.installUI(); this.bindInput();
+    this.inMenu = true; this.pointerScreenPosition = null; this.installMobileControls(); this.installUI(); this.bindInput();
   }
 
 
@@ -328,13 +334,13 @@ export class Game {
     const root = new THREE.Group();
 
     // Общие материалы
-    const bodyMat = new THREE.MeshToonMaterial({ color: teamColor });
-    const beakMat = new THREE.MeshToonMaterial({ color: 0xfcb823 });
-    const scleraMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const bodyMat = new THREE.MeshPhongMaterial({ color: teamColor, specular: 0x66705f, shininess: 30 });
+    const beakMat = new THREE.MeshPhongMaterial({ color: 0xfcb823, specular: 0x8a754b, shininess: 26 });
+    const scleraMat = new THREE.MeshPhongMaterial({ color: 0xffffff, specular: 0x777777, shininess: 48 });
     const pupilMat = new THREE.MeshBasicMaterial({ color: 0x11161b });
-    const wingMat = new THREE.MeshToonMaterial({ color: 0x6e87ca });
-    const helmetMat = new THREE.MeshToonMaterial({ color: 0x485a3a });
-    const strapMat = new THREE.MeshBasicMaterial({ color: 0x272c20 });
+    const wingMat = new THREE.MeshPhongMaterial({ color: 0x6e87ca, specular: 0x59627a, shininess: 24 });
+    const helmetMat = new THREE.MeshPhongMaterial({ color: 0x485a3a, specular: 0x636956, shininess: 32 });
+    const strapMat = new THREE.MeshPhongMaterial({ color: 0x272c20, specular: 0x45483f, shininess: 18 });
 
     // 1. Тело
     const bodyPivot = new THREE.Group();
@@ -1116,7 +1122,7 @@ export class Game {
     this.turnAnnouncement.classList.add('turn-announcement--show');
   }
 
-  createExplosion(x, y, radius) { this.audio?.play('explosion'); this.weapons?.removeArrowsInBlast?.(x, y, radius); this.weapons?.detonateSupplyCrates?.(x, y, radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
+  createExplosion(x, y, radius, sound = 'explosion') { this.audio?.play(sound); this.weapons?.removeArrowsInBlast?.(x, y, radius); this.weapons?.detonateSupplyCrates?.(x, y, radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
   startDrowning(w) {
     if (!w.alive) return;
     const remainingHp = Math.max(0, Math.ceil(w.hp));
@@ -1183,13 +1189,14 @@ export class Game {
         const helmetPosition = w.duck.helmetGroup.getWorldPosition(new THREE.Vector3());
         const helmetBody = this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic()
           .setTranslation(helmetPosition.x, helmetPosition.y)
-          .setLinearDamping(.12)
-          .setAngularDamping(.18)
+          .setLinearDamping(.65)
+          .setAngularDamping(1.1)
           .setCcdEnabled(true));
         const helmetCollider = this.world.createCollider(RAPIER.ColliderDesc.ball(.45)
           .setMass(.35)
-          .setFriction(.4)
-          .setRestitution(.28)
+          .setFriction(1.2)
+          .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max)
+          .setRestitution(.08)
           .setCollisionGroups(0x00080001), helmetBody);
         helmetBody.setRotation(w.mesh.rotation.z, true);
         helmetBody.applyImpulse({ x: w.vx * .18 + w.deathSide * .8, y: Math.max(1.8, w.vy * .15 + 2.4) }, true);
@@ -1235,7 +1242,7 @@ export class Game {
       if (direction) {
         w.facing = direction;
         if (Math.cos(this.angle) * direction < 0) this.angle = Math.PI - this.angle;
-        this.angle = clampAimToFacing(this.angle, w.facing);
+        this.angle = clampAimForWeapon(this.angle, w.facing, this.turn.weapon);
       }
       if (backflip) {
         this.audio?.play('jump');
@@ -1292,9 +1299,11 @@ export class Game {
           w.grounded = false;
         }
       }
-      const verticalAim = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
+      const girderPlacement = this.weapons.isGirder(this.turn.weapon) && this.turn.state === TURN.WAITING_INPUT;
+      const verticalAim = girderPlacement ? 0 :
+        (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
         (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
-      if (verticalAim) this.angle = clampAimToFacing(this.angle + verticalAim * (w.facing < 0 ? -1 : 1) * dt, w.facing);
+      if (verticalAim) this.angle = clampAimForWeapon(this.angle + verticalAim * (w.facing < 0 ? -1 : 1) * dt, w.facing, this.turn.weapon);
     }
 
     for (const w of this.worms) {
@@ -1355,7 +1364,7 @@ export class Game {
     this.weapons.updateMovement(dt);
     this.world.step(this.events);
     this.weapons.update(dt);
-    this.terrain?.setParticleLights(this.particles.glintData, this.weapons.getFireLightData());
+    this.terrain?.setParticleLights(this.particles.glintData, this.weapons.getFireLightData(), this.weapons.getProjectileLightData());
     this.syncWorms(dt);
     this.updateSupplyCrates(dt);
     this.updateDisplayedHealth(dt);
@@ -1435,7 +1444,7 @@ export class Game {
       if (!w.grounded) {
         w.airborneTime += dt;
         w.airbornePeakY = Math.max(w.airbornePeakY, w.y);
-        w.hardFalling = w.knockedDown || (w.airborneTime >= .4 && (w.airbornePeakY - w.y >= 3.5 || w.vy < -5.5));
+        w.hardFalling = w.knockedDown || (w.airborneTime >= .4 && (w.airbornePeakY - w.y >= 7 || w.vy < -11));
         if (w.knockedDown) {
           w.healthRevealTime = Math.max(w.healthRevealTime, .12);
           w.tumbleRotation += w.impactSpinDirection * dt * THREE.MathUtils.clamp(4.5 + Math.hypot(w.vx, w.vy) * .35, 5, 10);
@@ -1444,7 +1453,7 @@ export class Game {
         const wasActuallyAirborne = !wasGrounded && w.airborneTime >= .4;
         const impactSpeed = Math.hypot(w.vx, w.vy);
         const impactStillMoving = w.knockedDown && impactSpeed > .55;
-        const hardLanding = (wasActuallyAirborne && (w.airbornePeakY - w.y >= 3.5 || fallSpeed < -5.5)) || (w.knockedDown && !impactStillMoving);
+        const hardLanding = (wasActuallyAirborne && (w.airbornePeakY - w.y >= 7 || fallSpeed < -11)) || (w.knockedDown && !impactStillMoving);
         if (wasActuallyAirborne && fallSpeed < -2) {
           w.slideTime = .45;
         }
@@ -1607,49 +1616,44 @@ export class Game {
     this.camera.position.y -= this.earthquakeShakeY;
     this.earthquakeShakeX = 0;
     this.earthquakeShakeY = 0;
-    const target = this.weapons.projectile || this.cameraFocus || this.active;
-    const cameraPan = this.cameraFocus || this.weapons.projectile ? { x: 0, y: 0 } : this.cameraPan;
+    const automaticTarget = this.weapons.projectile || this.cameraFocus;
+    const manualCameraOverride = this.time < this.mouseCameraOverrideUntil;
     const smoothing = 1 - Math.exp(-5 * dt);
     this.camera.zoom += (this.zoom - this.camera.zoom) * smoothing;
     this.camera.updateProjectionMatrix();
 
     const halfW = (this.camera.right - this.camera.left) / 2 / this.camera.zoom,
       halfH = (this.camera.top - this.camera.bottom) / 2 / this.camera.zoom;
+    if (this.weaponPanel.open) this.mousePanPosition = null;
+    const mouseCameraPosition = this.mousePanPosition && !this.weaponPanel.open
+      ? (() => {
+        const rect = this.canvas.getBoundingClientRect(), horizontalMargin = 4, verticalMargin = 1.5;
+        const minX = halfW >= MAP.width / 2 ? MAP.width * .23 : halfW - horizontalMargin;
+        const maxX = halfW >= MAP.width / 2 ? MAP.width * .77 : MAP.width - halfW + horizontalMargin;
+        const minY = halfH >= MAP.height / 2 ? MAP.height * .25 : halfH - verticalMargin;
+        const maxY = halfH >= MAP.height / 2 ? MAP.height * .75 : MAP.height - halfH + verticalMargin;
+        const horizontal = THREE.MathUtils.clamp((this.mousePanPosition.x - rect.left) / rect.width, 0, 1);
+        const vertical = THREE.MathUtils.clamp((this.mousePanPosition.y - rect.top) / rect.height, 0, 1);
+        return { x: minX + (maxX - minX) * horizontal, y: maxY - (maxY - minY) * vertical };
+      })()
+      : null;
+    const useMouseCamera = !!mouseCameraPosition && manualCameraOverride;
+    const target = useMouseCamera ? mouseCameraPosition : automaticTarget || this.active;
+    const cameraPan = useMouseCamera || (automaticTarget && !manualCameraOverride) ? { x: 0, y: 0 } : this.cameraPan;
     if (target) {
-      let x = halfW >= MAP.width / 2
+      const x = useMouseCamera
+        ? target.x
+        : halfW >= MAP.width / 2
           ? MAP.width / 2
-          : THREE.MathUtils.clamp(target.x + cameraPan.x, halfW, MAP.width - halfW),
-        y = halfH >= MAP.height / 2
+          : THREE.MathUtils.clamp(target.x + cameraPan.x, halfW, MAP.width - halfW);
+      const y = useMouseCamera
+        ? target.y
+        : halfH >= MAP.height / 2
           ? THREE.MathUtils.clamp(MAP.height / 2 + cameraPan.y, MAP.height * .25, MAP.height * .75)
           : THREE.MathUtils.clamp(target.y + cameraPan.y, halfH, MAP.height - halfH);
-      if (this.weaponPanel.open) this.mousePanPosition = null;
-      if (this.mousePanPosition && !this.weaponPanel.open && !this.cameraFocus && !this.weapons.projectile) {
-        const rect = this.canvas.getBoundingClientRect();
-        const edgeZone = Math.min(rect.width, rect.height) * .12;
-        const edgeAxis = (position, start, size) => {
-          if (position < start + edgeZone) return -THREE.MathUtils.clamp((start + edgeZone - position) / edgeZone, 0, 1);
-          if (position > start + size - edgeZone) return THREE.MathUtils.clamp((position - (start + size - edgeZone)) / edgeZone, 0, 1);
-          return 0;
-        };
-        const edgeX = edgeAxis(this.mousePanPosition.x, rect.left, rect.width);
-        const edgeY = edgeAxis(this.mousePanPosition.y, rect.top, rect.height);
-        const panRate = .5;
-        if (edgeX && halfW < MAP.width / 2) {
-          const nextX = THREE.MathUtils.clamp(x + edgeX * halfW * 2 * panRate * dt, halfW, MAP.width - halfW);
-          this.cameraPan.x += nextX - x;
-          x = nextX;
-        }
-        if (edgeY) {
-          const minY = halfH >= MAP.height / 2 ? MAP.height * .25 : halfH;
-          const maxY = halfH >= MAP.height / 2 ? MAP.height * .75 : MAP.height - halfH;
-          const nextY = THREE.MathUtils.clamp(y - edgeY * halfH * 2 * panRate * dt, minY, maxY);
-          this.cameraPan.y += nextY - y;
-          y = nextY;
-        }
-      }
       this.camera.position.x += (x - this.camera.position.x) * smoothing;
       this.camera.position.y += (y - this.camera.position.y) * smoothing;
-      if (this.cameraFocus && !this.cameraFocus.supplyCrate && !this.cameraFocus.drowningFocus && !this.cameraFocus.explosionFocus && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
+      if (!manualCameraOverride && this.cameraFocus && !this.cameraFocus.supplyCrate && !this.cameraFocus.drowningFocus && !this.cameraFocus.explosionFocus && Math.hypot(x - this.camera.position.x, y - this.camera.position.y) < .35) this.cameraFocus = null;
     }
     if (this.earthquakeShake > 0) {
       const strength = Math.min(.88, this.earthquakeShake * 1.5);
@@ -1659,6 +1663,19 @@ export class Game {
       this.camera.position.y += this.earthquakeShakeY;
     }
     this.camera.updateMatrixWorld();
+    const girderPlacement = this.humanInput() && this.turn.state === TURN.WAITING_INPUT &&
+      this.weapons.isGirder(this.turn.weapon) && !this.weaponPanel.open;
+    if (girderPlacement && this.pointerScreenPosition) {
+      const rect = this.canvas.getBoundingClientRect();
+      this.vector.set(
+        (this.pointerScreenPosition.x - rect.left) / rect.width * 2 - 1,
+        -(this.pointerScreenPosition.y - rect.top) / rect.height * 2 + 1,
+        0
+      ).unproject(this.camera);
+      this.weapons.moveGirderPreview(this.vector.x, this.vector.y, this.angle);
+    } else if (!girderPlacement) {
+      this.weapons.girderPreview.visible = false;
+    }
     if (this.water?.bodyMaterial?.uniforms?.uMoonX) {
       this.water.bodyMaterial.uniforms.uMoonX.value = this.camera.position.x + .44 * halfW;
     }
@@ -2009,6 +2026,15 @@ export class Game {
       if (e.code === 'Escape' && this.weaponPanel.open) { e.preventDefault(); this.weaponPanel.close(true); return; }
       if (/^F([1-9]|1[0-2])$/.test(e.code)) { e.preventDefault(); if (!e.repeat) this.weaponPanel.shortcut(e.code); return; }
       if (this.weaponPanel.open) return;
+      if (this.turn.state === TURN.WAITING_INPUT && this.weapons.isGirder(this.turn.weapon) &&
+        ['KeyW', 'ArrowUp', 'KeyS', 'ArrowDown'].includes(e.code)) {
+        e.preventDefault();
+        if (!e.repeat) {
+          const direction = e.code === 'KeyW' || e.code === 'ArrowUp' ? 1 : -1;
+          this.angle = THREE.MathUtils.euclideanModulo(this.angle + direction * Math.PI / 4, Math.PI * 2);
+        }
+        return;
+      }
       if (['Space', 'Enter', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
       if (e.repeat) return;
       this.keys.add(e.code);
@@ -2032,11 +2058,12 @@ export class Game {
     });
     window.addEventListener('blur', () => {
       this.keys.clear();
+      this.mousePanPosition = null;
       if (this.turn?.state === TURN.CHARGING_SHOT) {
         this.turn.cancelCharge();
       }
     });
-    this.canvas.addEventListener('pointermove', e => {
+    window.addEventListener('pointermove', e => {
       if (e.pointerType === 'touch' && this.touchPointers.has(e.pointerId)) {
         this.touchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
         if (this.touchGesture && this.touchPointers.size === 1) {
@@ -2071,21 +2098,22 @@ export class Game {
           return;
         }
       }
-      const rect = this.canvas.getBoundingClientRect();
       if (e.pointerType === 'mouse') {
+        this.pointerScreenPosition = { x: e.clientX, y: e.clientY };
         if (this.weaponPanel.open) { this.mousePanPosition = null; return; }
-        const viewWidth = (this.camera.right - this.camera.left) / this.camera.zoom;
-        const viewHeight = (this.camera.top - this.camera.bottom) / this.camera.zoom;
-        const mousePanSensitivity = 2;
+        const previousMousePosition = this.mousePanPosition;
+        const deltaX = previousMousePosition ? e.clientX - previousMousePosition.x : e.movementX || 0;
+        const deltaY = previousMousePosition ? e.clientY - previousMousePosition.y : e.movementY || 0;
+        const moved = Math.abs(deltaX) > 0 || Math.abs(deltaY) > 0;
+        if (moved) this.mouseCameraOverrideUntil = this.time + 1;
         this.mousePanPosition = { x: e.clientX, y: e.clientY };
-        this.cameraPan.x += e.movementX * viewWidth / rect.width * mousePanSensitivity;
-        this.cameraPan.y -= e.movementY * viewHeight / rect.height * mousePanSensitivity;
       }
     });
-    this.canvas.addEventListener('pointerleave', e => {
-      if (e.pointerType === 'mouse') this.mousePanPosition = null;
+    window.addEventListener('pointerleave', e => {
+      if (e.pointerType === 'mouse') { this.mousePanPosition = null; this.pointerScreenPosition = null; }
     });
     this.canvas.addEventListener('pointerdown', e => {
+      if (e.pointerType === 'mouse') this.pointerScreenPosition = { x: e.clientX, y: e.clientY };
       if (e.pointerType === 'touch') {
         e.preventDefault();
         if (this.weaponPanel.open) { this.weaponPanel.close(); return; }

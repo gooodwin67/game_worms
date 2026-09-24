@@ -29,6 +29,12 @@ const ALIASES = { bomb: 'homing', madCow: 'madCows', fragment: 'cluster' };
 const WALKERS = new Set(['sheep', 'superSheep', 'sheepLauncher', 'moleBomb', 'madCow', 'oldWoman', 'salvation', 'skunk', 'donkey', 'mbBomb']);
 // Один визуальный снаряд используется всеми ракетными боеприпасами.
 const ROCKET_PROJECTILES = new Set(['bazooka', 'homing', 'mortar', 'napalm']);
+const litMaterial = (options = {}) => new THREE.MeshPhongMaterial({
+  specular: 0x72786a,
+  shininess: 34,
+  side: THREE.DoubleSide,
+  ...options
+});
 
 export class WeaponArt {
   constructor(ids) { this.ids = ids; this.textures = new Map(); this.equipmentTextures = new Map(); this.flameTexture = null; this.arrowSpriteTexture = null; this.dragonBallSpriteTexture = null; this.superSheepFlightTexture = null; this.detachedSmoke = []; this.aimAngleOverrides = readAimAngleOverrides(); }
@@ -146,7 +152,7 @@ export class WeaponArt {
   create(type) {
     const group = new THREE.Group(), thought = this.thought(type);
     const plane = (width, height, material, z) => {
-      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ ...material, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(width, height), litMaterial({ ...material, depthTest: false, depthWrite: false }));
       mesh.position.z = z; mesh.renderOrder = 20 + z; group.add(mesh); return mesh;
     };
     if (thought) {
@@ -169,7 +175,7 @@ export class WeaponArt {
     const size = 1.7;
     const mesh = new THREE.Mesh(
       new THREE.PlaneGeometry(size * image.width / longest, size * image.height / longest),
-      new THREE.MeshBasicMaterial({ map: texture, transparent: true, alphaTest: .08, depthTest: false, depthWrite: false, side: THREE.DoubleSide })
+      litMaterial({ map: texture, transparent: true, alphaTest: .08, depthTest: false, depthWrite: false })
     );
     mesh.position.z = .12;
     mesh.renderOrder = 18;
@@ -238,10 +244,66 @@ export class WeaponArt {
     this.dragonBallSpriteTexture.colorSpace = THREE.SRGBColorSpace;
     return this.dragonBallSpriteTexture;
   }
+  mailEnvelopeTexture() {
+    if (this.mailEnvelopeSpriteTexture) return this.mailEnvelopeSpriteTexture;
+    const canvas = document.createElement('canvas');
+    canvas.width = 112; canvas.height = 72;
+    const ctx = canvas.getContext('2d');
+    ctx.lineJoin = 'round';
+    ctx.fillStyle = '#fff9e9';
+    ctx.strokeStyle = '#66584b';
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.roundRect(5, 5, 102, 62, 6);
+    ctx.fill(); ctx.stroke();
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#c6b89e';
+    ctx.beginPath(); ctx.moveTo(8, 10); ctx.lineTo(56, 43); ctx.lineTo(104, 10); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(8, 63); ctx.lineTo(43, 35); ctx.moveTo(104, 63); ctx.lineTo(69, 35); ctx.stroke();
+    ctx.fillStyle = '#d94747';
+    ctx.beginPath(); ctx.arc(56, 44, 5, 0, Math.PI * 2); ctx.fill();
+    this.mailEnvelopeSpriteTexture = new THREE.CanvasTexture(canvas);
+    this.mailEnvelopeSpriteTexture.colorSpace = THREE.SRGBColorSpace;
+    return this.mailEnvelopeSpriteTexture;
+  }
+  createMegaBombMesh() {
+    const group = new THREE.Group();
+    group.name = 'mb-mega-bomb';
+    const make = (geometry, color, position, scale = [1, 1, 1], rotation = [0, 0, 0]) => {
+      // Phong shading makes the spherical casing read as a volume under the
+      // scene's existing hemisphere and directional lights. BasicMaterial was
+      // unlit, so every surface stayed uniformly colored and looked flat.
+      const mesh = new THREE.Mesh(geometry, litMaterial({
+        color,
+        depthTest: false,
+        depthWrite: false
+      }));
+      mesh.position.set(...position); mesh.scale.set(...scale); mesh.rotation.set(...rotation); mesh.renderOrder = 24; group.add(mesh);
+      return mesh;
+    };
+    make(new THREE.SphereGeometry(1, 32, 24), 0x202a29, [0, 0, 0], [.72, .72, .66]);
+    make(new THREE.SphereGeometry(1, 32, 24), 0x596853, [0, .015, .035], [.66, .66, .61]);
+    make(new THREE.TorusGeometry(.65, .045, 8, 32), 0x303a39, [0, 0, .08]);
+    make(new THREE.TorusGeometry(.66, .024, 6, 32), 0xb3a66d, [0, 0, -.08], [1, 1, 1], [Math.PI / 2, 0, 0]);
+    make(new THREE.CylinderGeometry(.19, .24, .13, 20), 0x303a39, [0, .63, .02]);
+    make(new THREE.TorusGeometry(.16, .045, 8, 20), 0xc1b478, [0, .74, .02]);
+    const hornDirections = Array.from({ length: 8 }, (_, i) => new THREE.Vector3(Math.cos(i * Math.PI / 4), Math.sin(i * Math.PI / 4), 0));
+    hornDirections.push(new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1));
+    for (const direction of hornDirections) {
+      const start = direction.clone().multiplyScalar(.56);
+      const center = direction.clone().multiplyScalar(.73);
+      const tip = direction.clone().multiplyScalar(.91);
+      const horn = make(new THREE.ConeGeometry(.09, .34, 10), 0x343d3b, center.toArray());
+      horn.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
+      make(new THREE.SphereGeometry(.075, 10, 8), 0xc5b77c, start.toArray());
+      make(new THREE.SphereGeometry(.065, 10, 8), 0x9d9a78, tip.toArray());
+    }
+    return group;
+  }
   createRocketMesh() {
     const group = new THREE.Group();
     group.name = 'primitive-rocket';
-    const material = (color, options = {}) => new THREE.MeshBasicMaterial({ color, depthTest: false, depthWrite: false, side: THREE.DoubleSide, ...options });
+    const material = (color, options = {}) => litMaterial({ color, depthTest: false, depthWrite: false, ...options });
     const add = (geometry, color, position = [0, 0, 0], rotation = 0) => {
       const mesh = new THREE.Mesh(geometry, material(color));
       mesh.position.set(...position);
@@ -425,6 +487,7 @@ export class WeaponArt {
     });
   }
   projectile(p, type, radius) {
+    if (p.megaBombMesh) p.megaBombMesh.visible = type === 'mbBomb';
     if (type === 'superSheepFlying') {
       p.baseMesh.visible = true;
       p.mesh = p.baseMesh;
@@ -486,6 +549,25 @@ export class WeaponArt {
       p.mesh.rotation.z = 0;
       return;
     }
+    if (type === 'mailstrike') {
+      p.mesh.material.map = this.mailEnvelopeTexture();
+      p.mesh.material.color.setHex(0xffffff);
+      p.mesh.material.needsUpdate = true;
+      p.mesh.scale.set(.78, .5, 1);
+      p.mesh.rotation.z = 0;
+      return;
+    }
+    if (type === 'mbBomb') {
+      if (!p.megaBombMesh) {
+        p.megaBombMesh = this.createMegaBombMesh();
+        p.baseMesh.parent?.add(p.megaBombMesh);
+      }
+      p.baseMesh.visible = false;
+      p.mesh = p.megaBombMesh;
+      p.mesh.scale.setScalar(1.15);
+      p.mesh.visible = true;
+      return;
+    }
     const iconType = type === 'sheepLauncher' ? 'sheep' : type;
     p.mesh.material.map = this.texture(iconType);
     p.mesh.material.color.setHex(0xffffff);
@@ -495,7 +577,16 @@ export class WeaponArt {
     p.mesh.rotation.z = 0;
   }
   orient(p, dt) {
-    if (p.type === 'dragonBall') {
+    if (p.type === 'mailstrike') {
+      const phase = p.age * p.mailSwayFrequency + p.mailSwayPhase;
+      p.mesh.rotation.set(
+        Math.sin(phase * .83 + 1.7) * .55,
+        Math.sin(phase * 1.11 + 3.1) * .55,
+        Math.sin(phase) * .75
+      );
+    } else if (p.type === 'mbBomb') {
+      p.mesh.rotation.set(Math.sin(p.age * 1.1) * .12, Math.sin(p.age * .8 + 1) * .12, p.age * 1.4);
+    } else if (p.type === 'dragonBall') {
       const v = p.body.linvel();
       p.mesh.rotation.z = Math.atan2(v.y, v.x);
     } else if (p.type === 'arrow') {

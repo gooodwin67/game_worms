@@ -28,13 +28,17 @@ export class AudioManager {
     this.registerSfx('moleBombLaunch', 'mole_bomb_launch.wav', { volume: 0.72 });
     this.registerSfx('animalFlight', 'animal_flight.wav', { loop: true, volume: 0.5 });
     this.registerSfx('airRaid', 'air_raid.wav', { volume: 0.65 });
+    this.registerSfx('mbBombFlight', 'mb_bomb_flight.wav', { volume: 0.62 });
+    this.registerSfx('mbBombExplosion', 'mb_bomb_explosion.mp3', { volume: 0.9 });
     this.registerSfx('homingLaunch', 'homing_launch.wav', { volume: 0.55 });
     this.registerSfx('arrowLaunch', 'arrow_launch.wav', { volume: 0.7 });
     this.registerSfx('firePunchNinja', 'fire_punch_ninja.wav', { volume: 0.8 });
     this.registerSfx('firePunchHit', 'fire_punch_hit.m4a', { volume: 0.8 });
     this.registerSfx('shotgun', 'shotgun.wav', { volume: 0.75 });
     this.registerSfx('pistolShot', 'pistol_shot.wav', { volume: 0.72 });
+    this.registerSfx('bazookaShot', 'bazooka_shot.mp3', { volume: 0.78 });
     this.registerSfx('mortarShot', 'mortar_shot.wav', { volume: 0.78 });
+    this.registerSfx('pigeonLaunch', 'pigeon_launch.wav', { volume: 0.7 });
     this.registerSfx('uziBurst', 'uzi_burst.mp3', { volume: 0.75 });
     this.registerSfx('minigunBurst', 'minigun_burst.wav', { volume: 0.75 });
   }

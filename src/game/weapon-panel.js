@@ -186,6 +186,7 @@ export class WeaponPanel {
     if (!this.canSelect()) return;
     if (!this.game.canUseWeapon(id)) return;
     this.game.turn.weapon = id;
+    if (id === 'girder' || id === 'girderPack') this.game.angle = 0;
     this.weaponBeforeAnglePreview = null;
     this.game.activeMoved = true;
     this.game.weapons.resetTarget();
