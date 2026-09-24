@@ -45,6 +45,15 @@ export class Terrain {
     this.blastRimCanvas.width = this.canvas.width;
     this.blastRimCanvas.height = this.canvas.height;
     this.blastRimCtx = this.blastRimCanvas.getContext('2d');
+    this.normalCanvas = document.createElement('canvas');
+    this.normalCanvas.width = this.canvas.width;
+    this.normalCanvas.height = this.canvas.height;
+    this.normalCtx = this.normalCanvas.getContext('2d', { willReadFrequently: true });
+    this.normalTexture = new THREE.CanvasTexture(this.normalCanvas);
+    this.normalTexture.minFilter = THREE.LinearFilter;
+    this.normalTexture.magFilter = THREE.LinearFilter;
+    this.normalTexture.generateMipmaps = false;
+    this.updateNormalMap();
 
     this.texture = new THREE.CanvasTexture(this.canvas);
     this.texture.minFilter = THREE.LinearFilter;
@@ -64,6 +73,7 @@ export class Terrain {
       uniforms: {
         mask: { value: this.texture },
         colorMap: { value: this.colorTexture },
+        normalMap: { value: this.normalTexture },
         blastRim: { value: this.blastRimTexture },
         mapSize: { value: new THREE.Vector2(this.canvas.width, this.canvas.height) },
         useCustomTexture: { value: this.hasCustomImage ? 1.0 : 0.0 },
@@ -90,6 +100,7 @@ export class Terrain {
       fragmentShader: `
         uniform sampler2D mask;
         uniform sampler2D colorMap;
+        uniform sampler2D normalMap;
         uniform sampler2D blastRim;
         uniform vec2 mapSize;
         uniform float useCustomTexture;
@@ -132,19 +143,7 @@ export class Terrain {
           float edgeAlpha = smoothstep(0.4, 0.7, sampleCenter.a);
 
           // Псевдорельеф из яркости соседних пикселей — аналог bump map из SVG-фильтра.
-          vec4 sampleLeft = texture2D(mask, vUv - vec2(px.x * 3.0, 0.0));
-          vec4 sampleRight = texture2D(mask, vUv + vec2(px.x * 3.0, 0.0));
-          vec4 sampleDown = texture2D(mask, vUv - vec2(0.0, px.y * 3.0));
-          vec4 sampleUp = texture2D(mask, vUv + vec2(0.0, px.y * 3.0));
-          vec3 luminance = vec3(.299, .587, .114);
-          float bumpCenter = dot(sampleCenter.rgb, luminance) * sampleCenter.a;
-          float bumpLeft = dot(sampleLeft.rgb, luminance) * sampleLeft.a;
-          float bumpRight = dot(sampleRight.rgb, luminance) * sampleRight.a;
-          float bumpDown = dot(sampleDown.rgb, luminance) * sampleDown.a;
-          float bumpUp = dot(sampleUp.rgb, luminance) * sampleUp.a;
-          // Усиливаем производные яркости текстуры, чтобы каменная поверхность
-          // реагировала на свет как мелкий рельеф, а не оставалась плоской картинкой.
-          vec3 normal = normalize(vec3((bumpLeft - bumpRight) * 3.0, (bumpDown - bumpUp) * 3.0, .95));
+          vec3 normal = normalize(texture2D(normalMap, vUv).rgb * 2.0 - 1.0);
           vec3 lightDirection = normalize(vec3(lightPos - vWorldPos, lightHeight));
           float diffuse = max(dot(normal, lightDirection), 0.0);
           vec3 reflected = reflect(-lightDirection, normal);
@@ -178,7 +177,7 @@ export class Terrain {
 
           // Общее освещение применяется и к пользовательской текстуре: раньше
           // вычислялся рельефный normal, но исходное изображение им не затенялось.
-          float terrainLight = 0.84 + diffuse * 0.16;
+          float terrainLight = 0.82 + diffuse * 0.22;
           finalColor *= terrainLight;
 
           // Слабые локальные блики от разлетающихся частиц взрыва.
@@ -257,6 +256,99 @@ export class Terrain {
       if (component.length >= minimumPixels) continue;
       for (const index of component) data[index * 4 + 3] = 0;
     }
+  }
+
+  updateNormalMap(x = 0, y = 0, width = this.canvas.width, height = this.canvas.height) {
+    const step = 3, padding = step;
+    const x0 = Math.max(0, Math.floor(x)), y0 = Math.max(0, Math.floor(y));
+    const x1 = Math.min(this.canvas.width, Math.ceil(x + width)), y1 = Math.min(this.canvas.height, Math.ceil(y + height));
+    if (x1 <= x0 || y1 <= y0) return;
+    const sourceX = Math.max(0, x0 - padding), sourceY = Math.max(0, y0 - padding);
+    const sourceRight = Math.min(this.canvas.width, x1 + padding), sourceBottom = Math.min(this.canvas.height, y1 + padding);
+    const sourceWidth = sourceRight - sourceX, sourceHeight = sourceBottom - sourceY;
+    const colorData = this.colorCtx.getImageData(sourceX, sourceY, sourceWidth, sourceHeight).data;
+    const maskData = this.ctx.getImageData(sourceX, sourceY, sourceWidth, sourceHeight).data;
+    const output = this.normalCtx.createImageData(x1 - x0, y1 - y0), outputData = output.data;
+    const heightAt = (px, py) => {
+      const index = ((py - sourceY) * sourceWidth + px - sourceX) * 4;
+      const alpha = maskData[index + 3] / 255;
+      return ((colorData[index] * .299 + colorData[index + 1] * .587 + colorData[index + 2] * .114) / 255) * alpha;
+    };
+    const strength = 10;
+    for (let py = y0; py < y1; py++) for (let px = x0; px < x1; px++) {
+      const left = heightAt(Math.max(0, px - step), py), right = heightAt(Math.min(this.canvas.width - 1, px + step), py);
+      const top = heightAt(px, Math.max(0, py - step)), bottom = heightAt(px, Math.min(this.canvas.height - 1, py + step));
+      let nx = (left - right) * strength, ny = (bottom - top) * strength, nz = 1;
+      const length = Math.hypot(nx, ny, nz); nx /= length; ny /= length; nz /= length;
+      const index = ((py - y0) * (x1 - x0) + px - x0) * 4;
+      outputData[index] = (nx * .5 + .5) * 255;
+      outputData[index + 1] = (ny * .5 + .5) * 255;
+      outputData[index + 2] = (nz * .5 + .5) * 255;
+      outputData[index + 3] = 255;
+    }
+    this.normalCtx.putImageData(output, x0, y0);
+    this.normalTexture.needsUpdate = true;
+  }
+
+  addTrainingBlock(x, y, width, height) {
+    const left = Math.round((x - width / 2) * this.scale), top = Math.round((MAP.height - y - height / 2) * this.scale);
+    const blockWidth = Math.round(width * this.scale), blockHeight = Math.round(height * this.scale);
+    this.ctx.save(); this.ctx.globalCompositeOperation = 'source-over'; this.ctx.fillStyle = '#fff';
+    this.ctx.fillRect(left, top, blockWidth, blockHeight); this.ctx.restore();
+
+    const c = this.colorCtx;
+    c.save(); c.globalCompositeOperation = 'source-over';
+    const sourceTop = Math.max(0, this.canvas.height - blockHeight - 2);
+    c.drawImage(this.colorCanvas, left, sourceTop, blockWidth, blockHeight, left, top, blockWidth, blockHeight);
+    c.restore();
+    this.paintGrassEdge(left, blockWidth, () => top, Math.floor(x * 83 + y * 19));
+
+    this.texture.needsUpdate = true; this.colorTexture.needsUpdate = true;
+    const normalPadding = Math.round(this.scale * .4 + 4);
+    this.updateNormalMap(left - normalPadding, top - normalPadding, blockWidth + normalPadding * 2, blockHeight + normalPadding * 2);
+    const size = MAP.chunk;
+    for (let cy = Math.max(0, Math.floor((top - normalPadding) / size)); cy <= Math.min(this.rows - 1, Math.floor((top + blockHeight) / size)); cy++) {
+      for (let cx = Math.max(0, Math.floor(left / size)); cx <= Math.min(this.columns - 1, Math.floor((left + blockWidth) / size)); cx++) this.rebuild(cx, cy);
+    }
+  }
+
+  addSurfaceGrass() {
+    const mask = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
+    const surface = new Int32Array(this.canvas.width).fill(-1);
+    for (let px = 0; px < this.canvas.width; px++) {
+      let py = this.canvas.height - 1;
+      while (py > 0 && mask[(py * this.canvas.width + px) * 4 + 3] < 128) py--;
+      if (mask[(py * this.canvas.width + px) * 4 + 3] < 128) continue;
+      while (py > 0 && mask[((py - 1) * this.canvas.width + px) * 4 + 3] >= 128) py--;
+      surface[px] = py;
+    }
+    this.paintGrassEdge(0, this.canvas.width, px => surface[px], 76423);
+    this.colorTexture.needsUpdate = true;
+    this.updateNormalMap();
+  }
+
+  paintGrassEdge(startX, width, surfaceAt, seed) {
+    const c = this.colorCtx, clumpSpacing = Math.max(10, Math.round(this.scale * .9));
+    const random = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const depthAt = [];
+    for (let i = 0; i <= Math.ceil(width / clumpSpacing) + 1; i++) depthAt.push(random() < .34 ? 0 : 2 + Math.floor(random() * 6));
+    const shades = [[76, 105, 44], [98, 125, 52], [116, 139, 61], [62, 88, 39]];
+    c.save(); c.globalCompositeOperation = 'source-over';
+    for (let offset = 0; offset < width; offset++) {
+      const y = surfaceAt(startX + offset);
+      if (y < 0) continue;
+      const knot = offset / clumpSpacing, index = Math.floor(knot), blend = knot - index;
+      const smoothBlend = blend * blend * (3 - 2 * blend);
+      const depth = Math.round(depthAt[index] + (depthAt[index + 1] - depthAt[index]) * smoothBlend);
+      if (!depth) continue;
+      for (let row = 0; row < depth; row++) {
+        const shade = shades[(index + row + Math.floor(offset / 3)) % shades.length];
+        const alpha = row === 0 ? .78 : .58;
+        c.fillStyle = `rgba(${shade[0]}, ${shade[1]}, ${shade[2]}, ${alpha})`;
+        c.fillRect(startX + offset, y + row, 1, 1);
+      }
+    }
+    c.restore();
   }
 
   generateProcedural() {
@@ -635,6 +727,8 @@ export class Terrain {
       this.colorCtx.restore();
       this.colorTexture.needsUpdate = true;
     }
+    const normalPadding = this.scale * .8 + 4;
+    this.updateNormalMap(px - r - normalPadding, py - r - normalPadding, (r + normalPadding) * 2, (r + normalPadding) * 2);
     const size = MAP.chunk;
     for (let cy = Math.max(0, Math.floor((py - r - 1) / size)); cy <= Math.min(this.rows - 1, Math.floor((py + r + 1) / size)); cy++) {
       for (let cx = Math.max(0, Math.floor((px - r - 1) / size)); cx <= Math.min(this.columns - 1, Math.floor((px + r + 1) / size)); cx++) {
@@ -711,6 +805,8 @@ export class Terrain {
     }
     this.texture.needsUpdate = true;
     this.colorTexture.needsUpdate = true;
+    const normalPadding = this.scale * .25 + 4;
+    this.updateNormalMap(Math.min(startX, endX) - normalPadding, Math.min(startY, endY) - normalPadding, Math.abs(endX - startX) + normalPadding * 2, Math.abs(endY - startY) + normalPadding * 2);
     for (let cy = 0; cy < this.rows; cy++) for (let cx = 0; cx < this.columns; cx++) this.rebuild(cx, cy);
   }
 
@@ -720,6 +816,7 @@ export class Terrain {
     this.material.dispose();
     this.texture.dispose();
     this.colorTexture.dispose();
+    this.normalTexture.dispose();
     this.blastRimTexture.dispose();
   }
 }

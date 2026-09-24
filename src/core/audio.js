@@ -32,8 +32,12 @@ export class AudioManager {
     this.registerSfx('mbBombExplosion', 'mb_bomb_explosion.mp3', { volume: 0.9 });
     this.registerSfx('homingLaunch', 'homing_launch.wav', { volume: 0.55 });
     this.registerSfx('arrowLaunch', 'arrow_launch.wav', { volume: 0.7 });
+    this.registerSfx('ninjaRopeLaunch', 'ninja_rope_launch.wav', { volume: 0.7 });
+    this.registerSfx('bungeeStart', 'bungee_start.wav', { volume: 0.65 });
+    this.registerSfx('ropeSwingTurn', 'rope_swing_turn.wav', { volume: 0.55 });
     this.registerSfx('firePunchNinja', 'fire_punch_ninja.wav', { volume: 0.8 });
     this.registerSfx('firePunchHit', 'fire_punch_hit.m4a', { volume: 0.8 });
+    this.registerSfx('baseballBatHit', 'baseball_bat_hit.wav', { volume: 0.8 });
     this.registerSfx('shotgun', 'shotgun.wav', { volume: 0.75 });
     this.registerSfx('pistolShot', 'pistol_shot.wav', { volume: 0.72 });
     this.registerSfx('bazookaShot', 'bazooka_shot.mp3', { volume: 0.78 });
@@ -57,7 +61,7 @@ export class AudioManager {
     return audio;
   }
 
-  play(name) {
+  play(name, startAt = 0) {
     if (!this.enabled) return null;
     const source = this.sfx.get(name);
     if (!source) return null;
@@ -67,7 +71,14 @@ export class AudioManager {
     audio.volume = source.volume;
     this.register(audio);
     audio.addEventListener('ended', () => this.elements.delete(audio), { once: true });
-    void audio.play().catch(() => { audio.playFailed = true; this.elements.delete(audio); });
+    const startPlayback = () => {
+      if (startAt > 0) {
+        try { audio.currentTime = Math.min(startAt, Number.isFinite(audio.duration) ? Math.max(0, audio.duration - .01) : startAt); } catch {}
+      }
+      void audio.play().catch(() => { audio.playFailed = true; this.elements.delete(audio); });
+    };
+    if (startAt > 0 && audio.readyState < 1) audio.addEventListener('loadedmetadata', startPlayback, { once: true });
+    else startPlayback();
     return audio;
   }
 

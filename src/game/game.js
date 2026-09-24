@@ -13,7 +13,7 @@ const STANDING_SLOPE_NORMAL_Y = Math.cos(80 * Math.PI / 180);
 const TARGET_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23ff3344' stroke-width='2'/%3E%3Cpath d='M16 1v8m0 14v8M1 16h8m14 0h8' stroke='%23ff3344' stroke-width='2'/%3E%3C/svg%3E\") 16 16, crosshair";
 const NO_AIM_WEAPONS = new Set([
   'skipGo', 'surrender', 'selectWorm', 'freeze', 'scales', 'lowGravity', 'fastWalk', 'laserSight', 'invisibility',
-  'firePunch', 'battleAxe', 'baseballBat', 'prod', 'kamikaze', 'suicideBomber', 'earthquake',
+  'firePunch', 'battleAxe', 'prod', 'kamikaze', 'suicideBomber', 'earthquake',
   'drill', 'pneumaticDrill', 'mine', 'dynamite', 'bungee', 'parachute', 'jetPack', 'uppercut'
 ]);
 function clampAimToFacing(angle, facing) {
@@ -594,6 +594,11 @@ export class Game {
 
     this.terrain = new Terrain(this.scene, this.world, mapImage);
     this.terrain.setLightingMode(this.lightingMode);
+    if (this.gameMode === 'training') {
+      this.terrain.addSurfaceGrass();
+      this.terrain.addTrainingBlock(36.3, 48.2, 8.1, 5.1);
+      this.terrain.addTrainingBlock(69.3, 48.2, 17.2, 5.9);
+    }
     const trainingPlatforms = this.trainingScenario?.map === 'target' ? this.terrain.findPlatformTops() : [];
     if (trainingPlatforms.length >= 4) {
       const [playerPlatform, ...targetPlatforms] = trainingPlatforms;
@@ -1162,7 +1167,8 @@ export class Game {
     if (!this.trainingFreePractice) w.hp = Math.max(0, w.hp - amount);
     w.pendingHp = w.hp;
     w.health.title = `${w.hp} HP`;
-    if (amount > 0 && previousHp > 0) w.pendingDamage = (w.pendingDamage || 0) + Math.min(amount, previousHp);
+    const damageTaken = !this.trainingFreePractice && amount > 0 && previousHp > 0 ? Math.min(amount, previousHp) : 0;
+    if (damageTaken > 0) w.pendingDamage = (w.pendingDamage || 0) + damageTaken;
     if (impact && amount > 0 && w.hp > 0 && !w.trainingTarget) {
       w.knockedDown = true;
       w.impactVelocityX = w.body.linvel().x;
@@ -1203,6 +1209,12 @@ export class Game {
         helmetBody.applyTorqueImpulse(w.deathSide * 1.6, true);
         w.deadHelmet = { group: w.duck.helmetGroup, body: helmetBody, collider: helmetCollider };
       }
+    }
+    if (damageTaken > 0 && w === this.active && this.turn && this.turn.state !== TURN.NEXT_TURN) {
+      this.turn.shots = 0;
+      this.audio?.stopLoop('energyCharge');
+      this.weapons.endUtility(true);
+      this.turn.settle();
     }
   }
 
@@ -1715,8 +1727,10 @@ export class Game {
       const isRecovering = !isJetPackFlying && w.recoveryTime > 0;
 
       // Отображение оружия у активного стрелка
+      const batSwing = this.weapons.pendingBatSwing?.owner === w ? this.weapons.pendingBatSwing : null;
+      const isRopeInAir = w === this.active && this.turn.weapon === 'ninjaRope' && isAirborne;
       const isShootingActive = !this.winner && (w === this.active) && !isRecovering &&
-        (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT);
+        (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || Boolean(batSwing) || isRopeInAir);
 
       if (isShootingActive) {
         if (d.currentWeapon !== this.turn.weapon) {
@@ -1733,7 +1747,16 @@ export class Game {
         const thought = this.weaponArt.thought(this.turn.weapon);
         d.weaponMesh.position.set(thought ? w.facing * .95 : w.facing * .28, thought ? 1.9 : -.05, 2);
         d.weaponMesh.scale.x = thought ? 1 : w.facing;
-        d.weaponMesh.rotation.z = thought ? -w.mesh.rotation.z : aimAngle * w.facing;
+        let swingOffset = 0;
+        if (batSwing) {
+          const t = batSwing.elapsed;
+          const ease = value => { const x = THREE.MathUtils.clamp(value, 0, 1); return x * x * (3 - 2 * x); };
+          if (t < .2) swingOffset = -.85 * ease(t / .2);
+          else if (t < .29) swingOffset = -.85 + 1.55 * ease((t - .2) / .09);
+          else swingOffset = .7 * (1 - ease((t - .29) / .23));
+          swingOffset *= w.facing;
+        }
+        d.weaponMesh.rotation.z = thought ? -w.mesh.rotation.z : aimAngle * w.facing + swingOffset;
       } else {
         if (d.weaponPivot) d.weaponPivot.visible = false;
         if (d.weaponMesh) d.weaponMesh.visible = false;

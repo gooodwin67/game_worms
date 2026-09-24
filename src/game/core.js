@@ -7,7 +7,7 @@ export const COLORS = [0x55d9ba, 0xff867b, 0xa995ff, 0xffd166, 0x63c5ff, 0xf58cd
 const WEAPONS_WITH_CUSTOM_SHOT_SFX = new Set([
   'shotgun', 'handgun', 'uzi', 'minigun', 'longbow', 'bazooka', 'mortar', 'firePunch',
   'homing', 'pigeon', 'magicBullet', 'airstrike', 'napalm', 'mailstrike',
-  'minestrike', 'moleBomb', 'moleSquadron', 'frenchSheep', 'carpet', 'armageddon', 'donkey', 'mbBomb',
+  'minestrike', 'moleBomb', 'moleSquadron', 'frenchSheep', 'carpet', 'armageddon', 'donkey', 'mbBomb', 'baseballBat', 'ninjaRope',
 ]);
 const shuffledIndexes = length => {
   const result = Array.from({ length }, (_, index) => index);
@@ -54,6 +54,7 @@ export class TurnMachine {
     g.audio?.stopLoop('turnCountdown');
     this.countdownStarted = false;
     g.weapons.endUtility();
+    g.weapons.finishRopeUse();
     g.weapons.girderStock = 5;
     g.lowGravity = false;
     g.world.gravity = { x: 0, y: GRAVITY };
@@ -105,7 +106,9 @@ export class TurnMachine {
     if (this.state !== TURN.CHARGING_SHOT) return;
     this.game.audio?.stopLoop('energyCharge');
     const usedWeapon = this.weapon;
-    if (!this.weaponConsumed && !this.game.canUseWeapon(usedWeapon)) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
+    const isRope = usedWeapon === 'ninjaRope';
+    const ropeSessionActive = isRope && this.game.weapons.ropeUsePending;
+    if ((isRope ? !ropeSessionActive : !this.weaponConsumed) && !this.game.canUseWeapon(usedWeapon)) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
     this.game.cameraFocus = null;
     this.state = TURN.ACTION_RESOLVING;
     if (this.game.weapons.fire(usedWeapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
@@ -113,7 +116,7 @@ export class TurnMachine {
       const launchAudio = this.game.audio?.play('energyShot');
       this.game.weapons.attachLaunchAudio(this.game.weapons.lastSpawnedProjectile, launchAudio);
     }
-    if (!this.weaponConsumed) {
+    if (!isRope && !this.weaponConsumed) {
       this.game.consumeWeapon(usedWeapon);
       this.weaponConsumed = true;
     }

@@ -28,7 +28,7 @@ const THROWN_GRENADES = new Set(['grenade','cluster','banana','superBanana','hol
 const GROUND_PROJECTILES = new Set(['bazooka','homing','pigeon','magicBullet','mortar','bomb','petrol','mbBomb','donkey','napalm','flameShot','mailstrike','carpet','armageddon','frenchSheep']);
 export class Weapons {
   constructor(game) {
-    this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.earthquake=null;this.pendingFirePunch=null;this.pendingAirLaunches=[];this.projectile=null;this.lastSpawnedProjectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillAngle=null;this.movementMode=null;this.jetPackFuel=100;this.hazards=[];this.message='';
+    this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.earthquake=null;this.pendingFirePunch=null;this.pendingBatSwing=null;this.pendingAirLaunches=[];this.projectile=null;this.lastSpawnedProjectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillAngle=null;this.movementMode=null;this.jetPackFuel=100;this.hazards=[];this.message='';this.ropeUsePending=false;this.ropeUseOwner=null;this.ropeUseTeam=null;this.ropeUseAirborne=false;this.ropeUseStarted=false;this.ropeUseStartPosition=null;
     this.ray=new RAPIER.Ray({x:0,y:0},{x:1,y:0});this.velocity={x:0,y:0};this.target={x:48,y:20};this.targetSet=false;
     this.visualBullets=[];this.bulletGeometry=new THREE.CircleGeometry(.075,10);this.bulletMaterial=new THREE.MeshBasicMaterial({color:0xffe08a,transparent:true,depthWrite:false});
     this.byCollider=new Map();this.pool=[];this.geometry=new THREE.PlaneGeometry(1,1);
@@ -47,7 +47,15 @@ export class Weapons {
       radiusScale:1.6,
       count:0
     };
-    this.tether=new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(),new THREE.Vector3()]),new THREE.LineBasicMaterial({color:0xe6cf9b}));this.tether.frustumCulled=false;this.tether.visible=false;game.scene.add(this.tether);
+    const ropeCanvas=document.createElement('canvas');ropeCanvas.width=ropeCanvas.height=64;const ropeCtx=ropeCanvas.getContext('2d');
+    ropeCtx.fillStyle='#80603f';ropeCtx.fillRect(0,0,64,64);
+    for(let offset=-64;offset<128;offset+=16){ropeCtx.strokeStyle='#c49a66';ropeCtx.lineWidth=7;ropeCtx.beginPath();ropeCtx.moveTo(offset,0);ropeCtx.lineTo(offset+64,64);ropeCtx.stroke();ropeCtx.strokeStyle='#4c3929';ropeCtx.lineWidth=4;ropeCtx.beginPath();ropeCtx.moveTo(offset+7,0);ropeCtx.lineTo(offset+71,64);ropeCtx.stroke();}
+    for(let offset=-64;offset<128;offset+=16){ropeCtx.strokeStyle='rgba(218,184,132,.8)';ropeCtx.lineWidth=5;ropeCtx.beginPath();ropeCtx.moveTo(offset,64);ropeCtx.lineTo(offset+64,0);ropeCtx.stroke();ropeCtx.strokeStyle='rgba(54,40,29,.75)';ropeCtx.lineWidth=3;ropeCtx.beginPath();ropeCtx.moveTo(offset+8,64);ropeCtx.lineTo(offset+72,0);ropeCtx.stroke();}
+    this.ropeTexture=new THREE.CanvasTexture(ropeCanvas);this.ropeTexture.colorSpace=THREE.SRGBColorSpace;this.ropeTexture.wrapS=THREE.RepeatWrapping;this.ropeTexture.wrapT=THREE.RepeatWrapping;this.ropeTexture.repeat.set(1,2);
+    this.ropeMaterial=new THREE.MeshPhongMaterial({map:this.ropeTexture,color:0xffffff,specular:0x392817,shininess:9});
+    this.ropeSegmentGeometry=new THREE.CylinderGeometry(.09,.09,1,8,1);
+    this.ropeJointGeometry=new THREE.SphereGeometry(.09,8,6);
+    this.tether=new THREE.Group();this.tether.frustumCulled=false;this.tether.visible=false;this.ropeSegments=[];this.ropeJoints=[];game.scene.add(this.tether);
     this.marker=new THREE.Group();
     const markerMaterial=new THREE.MeshBasicMaterial({color:0xff6688,transparent:true,opacity:.95,depthWrite:false,side:THREE.DoubleSide});
     const markerCoreMaterial=new THREE.MeshBasicMaterial({color:0xffffff,transparent:true,opacity:.9,depthWrite:false,side:THREE.DoubleSide});
@@ -176,7 +184,7 @@ export class Weapons {
     }
   }
   busy(){
-    if(this.pendingAirLaunches.length||this.drilling>0||this.retreat>0||this.movementMode||this.burst||this.flame||this.kamikaze||this.earthquake||this.pendingFirePunch||this.hazards.some(h=>h.kind==='fire'))return true;
+    if(this.pendingAirLaunches.length||this.pendingBatSwing||this.drilling>0||this.retreat>0||this.movementMode||this.burst||this.flame||this.kamikaze||this.earthquake||this.pendingFirePunch||this.hazards.some(h=>h.kind==='fire'))return true;
     for(const p of this.pool){
       if(!p.active||(p.type==='arrow'&&p.stuck))continue;
       if(p.type!=='mine')return true;
@@ -186,6 +194,87 @@ export class Weapons {
     return false;
   }
   scheduleAirLaunch(launch){this.pendingAirLaunches.push({remaining:1,launch});}
+  ropeSegmentBlocked(from,to,owner){
+    const dx=to.x-from.x,dy=to.y-from.y,distance=Math.hypot(dx,dy);
+    if(distance<.16)return false;
+    const nx=dx/distance,ny=dy/distance,offset=.08;
+    this.ray.origin.x=from.x+nx*offset;this.ray.origin.y=from.y+ny*offset;this.ray.dir.x=nx;this.ray.dir.y=ny;
+    const maxDistance=distance-offset-.08;if(maxDistance<=0)return null;
+    const hit=this.g.world.castRay(this.ray,maxDistance,true,undefined,undefined,owner.collider,owner.body,c=>!this.g.wormByCollider.has(c.handle)&&!this.byCollider.has(c.handle));
+    return Boolean(hit);
+  }
+  findRopeWrapPath(from,to,owner){
+    const terrain=this.g.terrain;if(!terrain)return null;
+    const step=.3,cols=Math.ceil(MAP.width/step),rows=Math.ceil(MAP.height/step),mask=terrain.captureCollisionMask(),blocked=new Uint8Array(cols*rows),known=new Uint8Array(cols*rows);
+    const cellAt=(x,y)=>({x:THREE.MathUtils.clamp(Math.floor(x/step),0,cols-1),y:THREE.MathUtils.clamp(Math.floor((MAP.height-y)/step),0,rows-1)});
+    const idAt=(x,y)=>y*cols+x;
+    const centerOf=id=>({x:((id%cols)+.5)*step,y:MAP.height-((Math.floor(id/cols)+.5)*step)});
+    const isBlocked=(x,y)=>{
+      if(x<0||x>=cols||y<0||y>=rows)return true;
+      const id=idAt(x,y);if(known[id])return Boolean(blocked[id]);known[id]=1;
+      const p=centerOf(id),clearance=.11;
+      blocked[id]=terrain.isSolid(p.x,p.y,mask)||terrain.isSolid(p.x-clearance,p.y,mask)||terrain.isSolid(p.x+clearance,p.y,mask)||terrain.isSolid(p.x,p.y-clearance,mask)||terrain.isSolid(p.x,p.y+clearance,mask)?1:0;
+      return Boolean(blocked[id]);
+    };
+    const nearestClear=point=>{
+      const start=cellAt(point.x,point.y);if(!isBlocked(start.x,start.y))return start;
+      for(let radius=1;radius<=5;radius++)for(let y=-radius;y<=radius;y++)for(let x=-radius;x<=radius;x++)if(Math.max(Math.abs(x),Math.abs(y))===radius&&!isBlocked(start.x+x,start.y+y))return{x:start.x+x,y:start.y+y};
+      return null;
+    };
+    const start=nearestClear(from),goal=nearestClear(to);if(!start||!goal)return null;
+    const startId=idAt(start.x,start.y),goalId=idAt(goal.x,goal.y),count=cols*rows,gScore=new Float32Array(count),cameFrom=new Int32Array(count),closed=new Uint8Array(count);gScore.fill(Infinity);cameFrom.fill(-1);gScore[startId]=0;
+    const heapIds=[],heapScores=[];
+    const push=(id,score)=>{let i=heapIds.length;heapIds.push(id);heapScores.push(score);while(i>0){const parent=(i-1)>>1;if(heapScores[parent]<=score)break;heapIds[i]=heapIds[parent];heapScores[i]=heapScores[parent];i=parent;}heapIds[i]=id;heapScores[i]=score;};
+    const pop=()=>{const id=heapIds[0],lastId=heapIds.pop(),lastScore=heapScores.pop();if(heapIds.length){let i=0;while(true){const left=i*2+1,right=left+1;if(left>=heapIds.length)break;const child=right<heapIds.length&&heapScores[right]<heapScores[left]?right:left;if(heapScores[child]>=lastScore)break;heapIds[i]=heapIds[child];heapScores[i]=heapScores[child];i=child;}heapIds[i]=lastId;heapScores[i]=lastScore;}return id;};
+    const heuristic=(x,y)=>{const dx=Math.abs(goal.x-x),dy=Math.abs(goal.y-y);return Math.max(dx,dy)+(Math.SQRT2-1)*Math.min(dx,dy);};
+    const directions=[[-1,0,1],[1,0,1],[0,-1,1],[0,1,1],[-1,-1,Math.SQRT2],[1,-1,Math.SQRT2],[-1,1,Math.SQRT2],[1,1,Math.SQRT2]];
+    push(startId,heuristic(start.x,start.y));let found=false,iterations=0;
+    while(heapIds.length&&iterations++<24000){const current=pop();if(closed[current])continue;if(current===goalId){found=true;break;}closed[current]=1;const cx=current%cols,cy=Math.floor(current/cols);
+      for(const[dx,dy,cost]of directions){const x=cx+dx,y=cy+dy;if(isBlocked(x,y)||closed[idAt(x,y)])continue;if(dx&&dy&&(isBlocked(cx+dx,cy)||isBlocked(cx,cy+dy)))continue;const next=idAt(x,y),tentative=gScore[current]+cost;if(tentative>=gScore[next])continue;cameFrom[next]=current;gScore[next]=tentative;push(next,tentative+heuristic(x,y));}
+    }
+    if(!found)return null;
+    const cells=[goalId];for(let id=goalId;id!==startId;){id=cameFrom[id];if(id<0)return null;cells.push(id);}cells.reverse();
+    const waypoints=[];let previousDirection=null;
+    for(let i=1;i<cells.length;i++){
+      const a=cells[i-1],b=cells[i],ax=a%cols,ay=Math.floor(a/cols),bx=b%cols,by=Math.floor(b/cols);
+      const direction=`${Math.sign(bx-ax)},${Math.sign(by-ay)}`;
+      if(previousDirection!==null&&direction!==previousDirection)waypoints.push(centerOf(a));
+      previousDirection=direction;
+    }
+    const goalCenter=centerOf(goalId);if(Math.hypot(goalCenter.x-to.x,goalCenter.y-to.y)>.18)waypoints.push(goalCenter);
+    return waypoints.filter(point=>Math.hypot(point.x-from.x,point.y-from.y)>.18&&Math.hypot(point.x-to.x,point.y-to.y)>.18);
+  }
+  updateTether(path){
+    const segmentCount=Math.max(0,path.length-1);
+    while(this.ropeSegments.length<segmentCount){
+      const texture=this.ropeTexture.clone();texture.needsUpdate=true;
+      const material=this.ropeMaterial.clone();material.map=texture;
+      const mesh=new THREE.Mesh(this.ropeSegmentGeometry,material);mesh.frustumCulled=false;this.tether.add(mesh);this.ropeSegments.push(mesh);
+    }
+    while(this.ropeSegments.length>segmentCount){const mesh=this.ropeSegments.pop();this.tether.remove(mesh);mesh.material.map.dispose();mesh.material.dispose();}
+    while(this.ropeJoints.length<path.length){const joint=new THREE.Mesh(this.ropeJointGeometry,this.ropeMaterial);joint.frustumCulled=false;this.tether.add(joint);this.ropeJoints.push(joint);}
+    while(this.ropeJoints.length>path.length){this.tether.remove(this.ropeJoints.pop());}
+    let totalLength=0;
+    for(let i=0;i<segmentCount;i++){
+      const a=path[i],b=path[i+1],dx=b.x-a.x,dy=b.y-a.y,length=Math.hypot(dx,dy);totalLength+=length;
+      const mesh=this.ropeSegments[i];mesh.position.set((a.x+b.x)/2,(a.y+b.y)/2,.32);mesh.scale.y=length;
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0),new THREE.Vector3(dx/Math.max(length,.001),dy/Math.max(length,.001),0));
+      mesh.material.map.repeat.set(1,Math.max(1,length*2.2));
+    }
+    for(let i=0;i<path.length;i++)this.ropeJoints[i].position.set(path[i].x,path[i].y,.32);
+    this.tether.visible=segmentCount>0;return totalLength;
+  }
+  resolveBatSwing(swing){
+    const {owner,dx,dy}=swing,g=this.g;
+    g.audio?.play('baseballBatHit');
+    for(const other of g.worms)if(other.alive&&other!==owner){
+      const x=other.x-owner.x,y=other.y-owner.y,distance=Math.hypot(x,y),forward=x*dx+y*dy,side=Math.abs(x*dy-y*dx);
+      if(forward>=-.3&&distance<2.8&&side<.85){
+        g.damage(other,20);g.releaseDamagePopups(other);
+        if(other.alive&&!other.frozen)other.body.applyImpulse({x:dx*18,y:dy*18+10},true);
+      }
+    }
+  }
   remote(){
     const owned=this.pool.filter(p=>p.active&&p.owner===this.g.active);
     const squadronMoles=owned.filter(p=>p.type==='moleBomb'&&p.fromMoleSquadron);
@@ -198,7 +287,7 @@ export class Weapons {
       if(p.type==='skunk'&&!p.gas){p.gas=true;return true;}
       if(['sheep','superSheep','sheepLauncher','superBanana','moleBomb','salvation','skunk'].includes(p.type)){p.remaining=0;return true;}
     }
-    if(this.movementMode){this.endUtility();return true;}
+    if(this.movementMode){this.endUtility(false);return true;}
     return false;
   }
   continueTurn(){this.g.turn.charge=0;this.g.turn.state=TURN.WAITING_INPUT;}
@@ -250,9 +339,25 @@ export class Weapons {
     g.supplyCrateChainReaction=true;
     try{for(const crate of targets){const index=g.supplyCrates.indexOf(crate);if(index<0)continue;const cx=crate.x,cy=crate.y;crate.dispose();g.supplyCrates.splice(index,1);this.createFireHazard(cx,cy,2.5,12,6);this.explode(cx,cy,1.8,30);}}finally{g.supplyCrateChainReaction=false;}
   }
+  finishRopeUse(){
+    if(!this.ropeUsePending)return;
+    this.g.consumeWeapon('ninjaRope',this.ropeUseTeam);
+    this.ropeUsePending=false;this.ropeUseOwner=null;this.ropeUseTeam=null;this.ropeUseAirborne=false;this.ropeUseStarted=false;this.ropeUseStartPosition=null;
+  }
+  updateRopeUse(forceGroundStop=false){
+    if(!this.ropeUsePending)return;
+    const owner=this.ropeUseOwner;
+    if(!owner?.alive){this.finishRopeUse();return;}
+    if(!owner.grounded){this.ropeUseAirborne=true;return;}
+    const velocity=owner.body.linvel();
+    const movedFromStart=this.ropeUseStartPosition&&Math.hypot(owner.x-this.ropeUseStartPosition.x,owner.y-this.ropeUseStartPosition.y)>.3;
+    if(movedFromStart)this.ropeUseStarted=true;
+    if(forceGroundStop||this.ropeUseAirborne||(this.ropeUseStarted&&Math.hypot(velocity.x,velocity.y)<.55))this.finishRopeUse();
+  }
   endUtility(finish=false){
-    const drilling=this.drilling>0;this.drilling=0;this.movementMode=null;this.tether.visible=false;this.message='';
+    const wasRope=this.movementMode?.mode==='rope',drilling=this.drilling>0;this.drilling=0;this.movementMode=null;this.tether.visible=false;this.message='';
     if(!this.g.turn)return;
+    if(finish)this.finishRopeUse();else this.updateRopeUse(wasRope&&this.ropeUseOwner?.grounded);
     if(finish||drilling||this.g.turn.remaining<=0||!this.g.active?.alive){this.g.turn.shots=0;this.g.turn.settle();}
     else if(this.g.turn.state===TURN.WAITING_INPUT||this.g.turn.state===TURN.CHARGING_SHOT)this.continueTurn();
   }
@@ -267,7 +372,7 @@ export class Weapons {
     if(this.movementMode){this.movementMode.remaining=Math.min(this.movementMode.remaining,3);this.movementMode.retreat=true;}
   }
   updateMovement(dt){
-    const g=this.g,m=this.movementMode;if(!m)return;
+    const g=this.g,m=this.movementMode;if(!m){this.updateRopeUse();return;}
     const w=m.owner;
     if(!w.alive||w!==g.active||g.turn.remaining<=0){this.endUtility(true);return;}
     const x=(g.keys.has('KeyD')||g.keys.has('ArrowRight')?1:0)-(g.keys.has('KeyA')||g.keys.has('ArrowLeft')?1:0);
@@ -283,17 +388,33 @@ export class Weapons {
       if(v.y<0)w.body.setLinvel({x:THREE.MathUtils.clamp(v.x+(x*5+g.wind)*dt,-5,5),y:Math.max(v.y,-(y<0?3:y>0?1:1.6))},true);
       if(m.airborne&&w.grounded){this.endUtility();return;}
       m.remaining-=dt;
-    }else if(m.mode==='rope'||m.mode==='bungee'){
-      if(m.mode==='bungee'&&!m.airborne){m.anchor={x:pos.x,y:pos.y};return;}
+    }else if(m.mode==='rope'){
       m.length=THREE.MathUtils.clamp(m.length-y*5*dt,1.5,35);
       const dx=pos.x-m.anchor.x,dy=pos.y-m.anchor.y,d=Math.max(.01,Math.hypot(dx,dy)),nx=dx/d,ny=dy/d;
-      const outward=Math.max(0,v.x*nx+v.y*ny),stretch=Math.max(0,d-m.length);
+      const outward=Math.max(0,v.x*nx+v.y*ny),stretch=Math.max(0,d-m.length),pull=stretch*100+outward*(d>=m.length?10:0);
+      w.body.applyImpulse({x:(x*8-nx*pull)*dt*w.body.mass(),y:-ny*pull*dt*w.body.mass()},true);
+      const swingAngle=Math.atan2(dy,dx);
+      if(m.swingLastAngle!==undefined&&dt>0){let angleDelta=swingAngle-m.swingLastAngle;if(angleDelta>Math.PI)angleDelta-=Math.PI*2;else if(angleDelta< -Math.PI)angleDelta+=Math.PI*2;const angularSpeed=angleDelta/dt,direction=angularSpeed>.7?1:angularSpeed<-.7?-1:0;if(direction&&m.swingDirection&&direction!==m.swingDirection&&m.swingTurnCooldown<=0){g.audio?.play('ropeSwingTurn');m.swingTurnCooldown=.2;}if(direction)m.swingDirection=direction;}
+      m.swingLastAngle=swingAngle;m.swingTurnCooldown=Math.max(0,(m.swingTurnCooldown||0)-dt);
+      this.updateTether([{x:m.anchor.x,y:m.anchor.y},{x:pos.x,y:pos.y}]);
+      this.message='A/D или ←/→ — раскачиваться · W/S — длина верёвки · пробел — отпустить';
+      m.remaining-=dt;
+    }else if(m.mode==='bungee'){
+      if(m.mode==='bungee'&&!m.airborne){m.anchor={x:pos.x,y:pos.y};return;}
+      m.length=THREE.MathUtils.clamp(m.length-y*5*dt,1.5,35);
+      m.path=m.path||[{x:m.anchor.x,y:m.anchor.y}];
+      while(m.path.length>1&&!this.ropeSegmentBlocked(m.path[m.path.length-2],pos,w))m.path.pop();
+      const lastNode=m.path[m.path.length-1];
+      if(this.ropeSegmentBlocked(lastNode,pos,w)&&m.path.length<64){const wrapPath=this.findRopeWrapPath(lastNode,pos,w);if(wrapPath?.length)m.path.push(...wrapPath);}
+      const pullNode=m.path[m.path.length-1],dx=pos.x-pullNode.x,dy=pos.y-pullNode.y,d=Math.max(.01,Math.hypot(dx,dy)),nx=dx/d,ny=dy/d;
+      const pathLength=this.updateTether([...m.path,{x:pos.x,y:pos.y}]);
+      const outward=Math.max(0,v.x*nx+v.y*ny),stretch=Math.max(0,pathLength-m.length);
       const pull=stretch*(m.mode==='bungee'?35:100)+outward*(d>=m.length?10:0);
       w.body.applyImpulse({x:(x*8-nx*pull)*dt*w.body.mass(),y:-ny*pull*dt*w.body.mass()},true);
-      const positions=this.tether.geometry.attributes.position;positions.setXYZ(0,m.anchor.x,m.anchor.y,.3);positions.setXYZ(1,pos.x,pos.y,.3);positions.needsUpdate=true;this.tether.visible=true;
       m.remaining-=dt;
     }else m.remaining-=dt;
     if(m.remaining<=0)this.endUtility(g.turn.state!==TURN.WAITING_INPUT);
+    else this.updateRopeUse();
   }
   performFirePunch(w){
     const g=this.g;
@@ -357,8 +478,11 @@ export class Weapons {
       else{g.audio?.play('firePunchHit');this.performFirePunch(w);g.turn.settle();}
       return true;
     }
-    if(type==='battleAxe'||type==='baseballBat'||type==='prod'){
-      for(const other of g.worms)if(other.alive&&other!==w){const x=other.x-w.x,y=other.y-w.y;if(x*w.facing>=-.3&&Math.hypot(x,y)<2.8){g.damage(other,type==='prod'?1:type==='battleAxe'?Math.max(1,Math.floor(other.hp/2)):30);if(other.alive&&!other.frozen)other.body.applyImpulse(type==='battleAxe'?{x:0,y:-2}:type==='baseballBat'?{x:dx*10,y:dy*10}:{x:w.facing*9.6,y:3.2},true);}}
+    if(type==='baseballBat'){
+      this.pendingBatSwing={owner:w,dx,dy,elapsed:0,hit:false};return true;
+    }
+    if(type==='battleAxe'||type==='prod'){
+      for(const other of g.worms)if(other.alive&&other!==w){const x=other.x-w.x,y=other.y-w.y;if(x*w.facing>=-.3&&Math.hypot(x,y)<2.8){g.damage(other,type==='prod'?1:Math.max(1,Math.floor(other.hp/2)));if(other.alive&&!other.frozen)other.body.applyImpulse(type==='battleAxe'?{x:0,y:-2}:{x:w.facing*9.6,y:3.2},true);}}
       g.turn.settle();return true;
     }
     if(type==='kamikaze'){this.kamikaze={owner:w,dx:w.facing,dy:0,remaining:.7,drillTick:0,gravityScale:w.body.gravityScale()};w.body.setGravityScale(0,true);return true;}
@@ -373,12 +497,15 @@ export class Weapons {
       g.turn.settle();return true;
     }
     if(type==='ninjaRope'){
+      g.audio?.play('ninjaRopeLaunch',.2);
       this.ray.origin={x:w.x,y:w.y};this.ray.dir={x:dx,y:dy};
       const hit=g.world.castRay(this.ray,35,true,undefined,undefined,w.collider,w.body,c=>!g.wormByCollider.has(c.handle)&&!this.byCollider.has(c.handle));
-      if(!hit){this.message='Верёвка не достаёт до поверхности';return false;}
-      this.beginUtility('rope');Object.assign(this.movementMode,{anchor:{x:w.x+dx*hit.timeOfImpact,y:w.y+dy*hit.timeOfImpact},length:Math.max(1.5,hit.timeOfImpact)});return true;
+      if(!hit){this.tether.visible=false;this.message='Канат не достал до поверхности';return false;}
+      const anchor={x:w.x+dx*hit.timeOfImpact,y:w.y+dy*hit.timeOfImpact};
+      if(!this.ropeUsePending){this.ropeUsePending=true;this.ropeUseOwner=w;this.ropeUseTeam=w.team;this.ropeUseAirborne=false;this.ropeUseStarted=true;this.ropeUseStartPosition={x:w.x,y:w.y};}
+      this.beginUtility('rope');Object.assign(this.movementMode,{anchor,length:Math.max(1.5,hit.timeOfImpact),swingLastAngle:undefined,swingDirection:0,swingTurnCooldown:0});this.updateTether([anchor,{x:w.x,y:w.y}]);this.continueTurn();return true;
     }
-    if(type==='bungee'){this.beginUtility('bungee');Object.assign(this.movementMode,{anchor:{x:w.x,y:w.y},length:4});return true;}
+    if(type==='bungee'){g.audio?.play('bungeeStart');this.beginUtility('bungee');Object.assign(this.movementMode,{anchor:{x:w.x,y:w.y},length:4});return true;}
     if(type==='parachute'){this.beginUtility('parachute');return true;}
     if(type==='jetPack'){this.beginUtility('jetPack',30);return true;}
     if(type==='uppercut'){
@@ -515,6 +642,7 @@ export class Weapons {
   update(dt) {
     const g=this.g;
     for(let i=this.pendingAirLaunches.length-1;i>=0;i--){const pending=this.pendingAirLaunches[i];pending.remaining-=dt;if(pending.remaining<=0){this.pendingAirLaunches.splice(i,1);pending.launch();}}
+    if(this.pendingBatSwing){const swing=this.pendingBatSwing;swing.elapsed+=dt;if(!swing.hit&&swing.elapsed>=.29){swing.hit=true;this.resolveBatSwing(swing);}if(swing.elapsed>=.52)this.pendingBatSwing=null;}
     if(this.pendingFirePunch&&(this.pendingFirePunch.audio.ended||this.pendingFirePunch.audio.playFailed)){
       const {owner}=this.pendingFirePunch;this.pendingFirePunch=null;
       g.audio?.play('firePunchHit');this.performFirePunch(owner);g.turn.settle();
@@ -881,5 +1009,5 @@ export class Weapons {
       g.particles.emit(x,y,.35);
     }
   }
-  dispose(){this.pendingAirLaunches.length=0;this.girderPreview.removeFromParent();this.girderPreview.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});for(const hazard of this.hazards)if(hazard.kind==='dragonField'){hazard.mesh.removeFromParent();for(const part of hazard.mesh.children){part.geometry.dispose();part.material.dispose();}}this.hazards.length=0;for(const p of this.pool)p.fuseLabel?.remove();for(const bullet of this.visualBullets){bullet.mesh.removeFromParent();}this.visualBullets.length=0;this.bulletGeometry.dispose();this.bulletMaterial.dispose();this.fireParticles.mesh.removeFromParent();this.fireParticles.geometry.dispose();this.fireParticles.material.dispose();this.tether.removeFromParent();this.tether.geometry.dispose();this.tether.material.dispose();for(const p of this.pool){p.baseMesh.removeFromParent();p.baseMesh.material.dispose();if(p.megaBombMesh){p.megaBombMesh.removeFromParent();p.megaBombMesh.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});}if(p.rocketMesh){const smokePuffs=p.rocketMesh.userData.rocketArt?.smokePuffs||[];p.rocketMesh.removeFromParent();p.rocketMesh.traverse(child=>{child.geometry?.dispose();if(child.material?.dispose)child.material.dispose();});for(const puff of smokePuffs){puff.removeFromParent();puff.geometry?.dispose();puff.material?.dispose();}}}this.geometry.dispose();this.marker.removeFromParent();this.marker.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});}
+  dispose(){this.pendingAirLaunches.length=0;this.girderPreview.removeFromParent();this.girderPreview.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});for(const hazard of this.hazards)if(hazard.kind==='dragonField'){hazard.mesh.removeFromParent();for(const part of hazard.mesh.children){part.geometry.dispose();part.material.dispose();}}this.hazards.length=0;for(const p of this.pool)p.fuseLabel?.remove();for(const bullet of this.visualBullets){bullet.mesh.removeFromParent();}this.visualBullets.length=0;this.bulletGeometry.dispose();this.bulletMaterial.dispose();this.fireParticles.mesh.removeFromParent();this.fireParticles.geometry.dispose();this.fireParticles.material.dispose();this.tether.removeFromParent();for(const mesh of this.ropeSegments){mesh.material.map.dispose();mesh.material.dispose();}this.ropeSegmentGeometry.dispose();this.ropeJointGeometry.dispose();this.ropeMaterial.dispose();this.ropeTexture.dispose();for(const p of this.pool){p.baseMesh.removeFromParent();p.baseMesh.material.dispose();if(p.megaBombMesh){p.megaBombMesh.removeFromParent();p.megaBombMesh.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});}if(p.rocketMesh){const smokePuffs=p.rocketMesh.userData.rocketArt?.smokePuffs||[];p.rocketMesh.removeFromParent();p.rocketMesh.traverse(child=>{child.geometry?.dispose();if(child.material?.dispose)child.material.dispose();});for(const puff of smokePuffs){puff.removeFromParent();puff.geometry?.dispose();puff.material?.dispose();}}}this.geometry.dispose();this.marker.removeFromParent();this.marker.traverse(child=>{child.geometry?.dispose();child.material?.dispose();});}
 }
