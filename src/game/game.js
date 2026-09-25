@@ -62,62 +62,82 @@ function unlockedTrainingWeapons(profile = {}) {
 
 // Зафиксированные параметры утки
 const DUCK_PARAMS = {
-  bodyScaleX: 0.96,
-  bodyScaleY: 0.91,
-  bodyScaleZ: 0.9,
-  bodyPosY: 0.36,
+  bodyScaleX: 1.08,
+  bodyScaleY: 1.02,
+  bodyScaleZ: 1,
+  bodyPosY: 0.43,
   bodyRotX: 0,
   bodyRotY: 0,
   bodyRotZ: 0,
   headScale: 1,
-  headPosX: 0,
-  headPosY: 0.88,
-  headPosZ: 0,
+  headPosX: 0.01,
+  headPosY: 1.16,
+  headPosZ: -0.01,
   headRotX: 0,
-  headRotY: 0.818407346410207,
+  headRotY: 0.66,
   headRotZ: 0.01,
-  beakScaleX: 0.64,
-  beakScaleY: 0.46,
-  beakScaleZ: 2.22,
-  beakPosY: -0.14,
-  beakPosZ: 0.3,
-  beakRotX: 0.038407346410207,
+  beakScaleX: 1,
+  beakScaleY: 1,
+  beakScaleZ: 1,
+  beakPosY: -0.22,
+  beakPosZ: 0.48,
+  beakRotX: 0,
   beakRotY: 0,
   beakRotZ: 0,
   eyeScale: 1.4,
-  eyeWidth: 0.74,
-  eyeHeight: 1.21,
-  eyeSpread: 0.12,
-  eyePosY: 0.11,
-  eyePosZ: 0.4,
-  pupilScale: 0.65,
-  pupilShiftX: 0.02,
-  helmetScale: 1.15,
-  helmetPosY: 0.03,
-  helmetPosZ: 0.06,
-  helmetTiltX: -0.241592653589793,
-  helmetTiltY: 1.71,
-  helmetTiltZ: -0.42,
-  helmetBrimWidth: 0.04,
-  wingScaleY: 0.8,
-  wingScaleXZ: 1.6,
-  wingSpreadZ: 0.28,
-  wingPosY: 0.41,
-  wingPosX: -0.05,
-  wingBaseRotZ: 0.128407346410207,
-  wingBaseRotY: 0.398407346410207,
-  tailScale: 1.02,
-  tailPosX: -0.41,
-  tailPosY: 0.39,
-  tailRotZ: 1.15840734641021,
+  eyeRotY: -0.121592653589793,
+  eyeWidth: 0.86,
+  eyeHeight: 1.3,
+  eyeSpread: 0.1,
+  eyePosY: 0.045,
+  eyePosZ: 0.405,
+  pupilScale: 0.74,
+  pupilScaleY: 1.07,
+  pupilShiftX: 0.01,
+  helmetScale: 1.12,
+  helmetPosY: 0.06,
+  helmetPosZ: 0.01,
+  helmetTiltX: -0.611592653589793,
+  helmetTiltY: 0,
+  helmetTiltZ: 0.008407346410207,
+  helmetBrimWidth: 0.045,
+  strapScaleX: 1.03,
+  strapScaleY: 0.92,
+  strapScaleZ: 1.1,
+  strapPosX: 0.01,
+  strapPosY: -0.05,
+  strapPosZ: -0.23,
+  strapRotX: 0.238407346410207,
+  strapRotY: 0.008407346410207,
+  strapRotZ: 0.008407346410207,
+  strapButtonScaleX: 0.99,
+  strapButtonScaleY: 1.13,
+  strapButtonScaleZ: 0.49,
+  strapButtonPosX: 0.43,
+  strapButtonPosY: 0.01,
+  strapButtonPosZ: 0.25,
+  strapButtonRotX: 0.108407346410207,
+  strapButtonRotY: -0.791592653589793,
+  strapButtonRotZ: 0.238407346410207,
+  wingScaleY: 0.68,
+  wingScaleXZ: 0.8,
+  wingSpreadZ: 0.32,
+  wingPosY: 0.46,
+  wingPosX: -0.14,
+  wingBaseRotZ: 0.338407346410207,
+  wingBaseRotY: -0.191592653589793,
+  tailScale: 1,
+  tailPosX: -0.45,
+  tailPosY: 0.42,
+  tailRotZ: 0.958407346410207,
   tailRotY: -0.061592653589793,
   rootScale: 1.13,
-  rootPosY: -0.74,
+  rootPosY: -0.67,
   feetScaleX: 1,
   feetScaleY: 1,
   feetScaleZ: 1,
   feetPosX: 0,
-  feetPosY: 0,
+  feetPosY: -0.12,
   feetPosZ: 0,
   feetRotX: 0,
   feetRotY: 0,
@@ -129,9 +149,11 @@ const DUCK_PARAM_LABELS = {
   headScale: 'Размер головы', headPosX: 'Положение головы X', headPosY: 'Положение головы Y', headPosZ: 'Положение головы Z',
   headRotX: 'Поворот головы X', headRotY: 'Поворот головы Y', headRotZ: 'Поворот головы Z',
   beakScaleX: 'Размер клюва X', beakScaleY: 'Размер клюва Y', beakScaleZ: 'Размер клюва Z', beakPosY: 'Положение клюва Y', beakPosZ: 'Положение клюва Z', beakRotX: 'Поворот клюва X', beakRotY: 'Поворот клюва Y', beakRotZ: 'Поворот клюва Z',
-  eyeScale: 'Общий размер глаз', eyeWidth: 'Ширина глаза', eyeHeight: 'Высота глаза', eyeSpread: 'Расстояние между глазами', eyePosY: 'Положение глаз Y', eyePosZ: 'Положение глаз Z',
-  pupilScale: 'Размер зрачков', pupilShiftX: 'Смещение зрачков X',
+  eyeScale: 'Общий размер глаз', eyeRotY: 'Поворот глаз Y (в разные стороны)', eyeWidth: 'Ширина глаза', eyeHeight: 'Высота глаза', eyeSpread: 'Расстояние между глазами', eyePosY: 'Положение глаз Y', eyePosZ: 'Положение глаз Z',
+  pupilScale: 'Размер зрачков', pupilScaleY: 'Высота зрачков Y', pupilShiftX: 'Смещение зрачков X',
   helmetScale: 'Размер каски', helmetPosY: 'Положение каски Y', helmetPosZ: 'Положение каски Z', helmetTiltX: 'Наклон каски X', helmetTiltY: 'Наклон каски Y', helmetTiltZ: 'Наклон каски Z', helmetBrimWidth: 'Толщина обода каски',
+  strapScaleX: 'Размер ремешка X', strapScaleY: 'Размер ремешка Y', strapScaleZ: 'Размер ремешка Z', strapPosX: 'Положение ремешка X', strapPosY: 'Положение ремешка Y', strapPosZ: 'Положение ремешка Z', strapRotX: 'Поворот ремешка X', strapRotY: 'Поворот ремешка Y', strapRotZ: 'Поворот ремешка Z',
+  strapButtonScaleX: 'Размер пуговицы X', strapButtonScaleY: 'Размер пуговицы Y', strapButtonScaleZ: 'Размер пуговицы Z', strapButtonPosX: 'Положение пуговиц X', strapButtonPosY: 'Положение пуговиц Y', strapButtonPosZ: 'Положение пуговиц Z', strapButtonRotX: 'Поворот пуговиц X', strapButtonRotY: 'Поворот пуговиц Y', strapButtonRotZ: 'Поворот пуговиц Z',
   wingScaleY: 'Размер крыла Y', wingScaleXZ: 'Размер крыла X/Z', wingSpreadZ: 'Расстояние крыльев', wingPosY: 'Положение крыльев Y', wingPosX: 'Положение крыльев X', wingBaseRotZ: 'Поворот крыльев Z', wingBaseRotY: 'Поворот крыльев Y',
   tailScale: 'Размер хвоста', tailPosX: 'Положение хвоста X', tailPosY: 'Положение хвоста Y', tailRotZ: 'Поворот хвоста Z', tailRotY: 'Поворот хвоста Y',
   feetScaleX: 'Размер лапок X', feetScaleY: 'Размер лапок Y', feetScaleZ: 'Размер лапок Z', feetPosX: 'Положение лапок X', feetPosY: 'Положение лапок Y', feetPosZ: 'Положение лапок Z', feetRotX: 'Поворот лапок X', feetRotY: 'Поворот лапок Y', feetRotZ: 'Поворот лапок Z',
@@ -144,12 +166,14 @@ const DUCK_PARAM_GROUPS = [
   ['beak', 'Клюв', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('beak'))],
   ['eye', 'Глаза', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('eye') || key.startsWith('pupil'))],
   ['helmet', 'Каска', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('helmet'))],
+  ['strap', 'Ремешок каски', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('strap') && !key.startsWith('strapButton'))],
+  ['strapButton', 'Пуговицы ремешка', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('strapButton'))],
   ['wing', 'Крылья', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('wing'))],
   ['tail', 'Хвост', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('tail'))],
   ['feet', 'Лапки', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('feet'))]
 ];
 try {
-  const savedDuckParams = JSON.parse(localStorage.getItem('game-worms-player-model-v3') || '{}');
+  const savedDuckParams = JSON.parse(localStorage.getItem('game-worms-player-model-v11') || '{}');
   for (const [key, value] of Object.entries(savedDuckParams)) {
     if (Object.hasOwn(DUCK_PARAMS, key) && Number.isFinite(value)) DUCK_PARAMS[key] = value;
   }
@@ -378,14 +402,14 @@ export class Game {
     const root = new THREE.Group();
 
     // Общие материалы
-    const bodyMat = new THREE.MeshPhongMaterial({ color: teamColor, specular: 0x66705f, shininess: 30 });
-    const beakMat = new THREE.MeshPhongMaterial({ color: 0xfcb823, specular: 0x8a754b, shininess: 26 });
-    const scleraMat = new THREE.MeshPhongMaterial({ color: 0xffffff, specular: 0x777777, shininess: 48 });
+    const bodyMat = new THREE.MeshLambertMaterial({ color: teamColor });
+    const beakMat = new THREE.MeshPhongMaterial({ color: 0xffb51b, specular: 0x443015, shininess: 24 });
+    const scleraMat = new THREE.MeshLambertMaterial({ color: 0xfff4e5 });
     const pupilMat = new THREE.MeshBasicMaterial({ color: 0x11161b });
-    const nearWingMat = new THREE.MeshPhongMaterial({ color: 0x7167c8, specular: 0x8e8ad0, shininess: 28 });
-    const farWingMat = new THREE.MeshPhongMaterial({ color: 0x65d8b7, specular: 0x96f2d8, shininess: 28 });
-    const helmetMat = new THREE.MeshPhongMaterial({ color: 0x485a3a, specular: 0x636956, shininess: 32 });
-    const strapMat = new THREE.MeshPhongMaterial({ color: 0x272c20, specular: 0x45483f, shininess: 18 });
+    const nearWingMat = new THREE.MeshPhongMaterial({ color: 0x7864bd, specular: 0x29213b, shininess: 18 });
+    const farWingMat = nearWingMat;
+    const helmetMat = new THREE.MeshPhongMaterial({ color: 0x606b36, specular: 0x383d20, shininess: 22, side: THREE.DoubleSide });
+    const strapMat = new THREE.MeshPhongMaterial({ color: 0x3c4224, specular: 0x202313, shininess: 16, side: THREE.DoubleSide });
 
     // 1. Тело
     const bodyPivot = new THREE.Group();
@@ -393,7 +417,7 @@ export class Game {
     bodyPivot.rotation.set(p.bodyRotX, p.bodyRotY, p.bodyRotZ);
     root.add(bodyPivot);
 
-    const bodyMesh = new THREE.Mesh(new THREE.SphereGeometry(0.36, 20, 20), bodyMat);
+    const bodyMesh = new THREE.Mesh(new THREE.SphereGeometry(0.36, 32, 24), bodyMat);
     bodyMesh.scale.set(p.bodyScaleX, p.bodyScaleY, p.bodyScaleZ);
     bodyPivot.add(bodyMesh);
 
@@ -409,31 +433,30 @@ export class Game {
     tailPivot.add(tailMesh);
 
     const feetGroup = new THREE.Group();
-    root.add(feetGroup);
-    const footMaterial = new THREE.MeshPhongMaterial({ color: 0xf28a24, specular: 0x9b5a24, shininess: 22 });
-    const legMaterial = new THREE.MeshPhongMaterial({ color: 0xd9781a, specular: 0x8d4d1c, shininess: 18 });
+    bodyPivot.add(feetGroup);
+    const footMaterial = new THREE.MeshPhongMaterial({ color: 0xffa51b, specular: 0x4b3112, shininess: 22 });
+    const legMaterial = new THREE.MeshLambertMaterial({ color: 0xe88c16 });
+    const footPivots = [];
     for (const side of [-1, 1]) {
-      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.035, .12, 4, 8), legMaterial);
-      leg.position.set(side < 0 ? -.035 : .035, .15, side * .09);
-      feetGroup.add(leg);
+      const footX = side < 0 ? .08 : -.07;
+      const footPivot = new THREE.Group();
+      footPivot.position.set(footX, .15, side * .15);
+      feetGroup.add(footPivot);
+      footPivots.push({ pivot: footPivot, side });
+      const leg = new THREE.Mesh(new THREE.CapsuleGeometry(.046, .09, 6, 12), legMaterial);
+      footPivot.add(leg);
       const foot = new THREE.Group();
-      foot.position.set(side < 0 ? -.035 : .035, .045, side * .09);
-      feetGroup.add(foot);
-      const web = new THREE.Mesh(new THREE.SphereGeometry(1, 14, 10), footMaterial);
-      web.scale.set(.14, .035, .065);
+      foot.position.set(.035, -.095, 0);
+      footPivot.add(foot);
+      const web = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 16), footMaterial);
+      web.scale.set(.18, .055, .105);
       foot.add(web);
-      for (let toe = -1; toe <= 1; toe++) {
-        const toeMesh = new THREE.Mesh(new THREE.SphereGeometry(1, 12, 8), footMaterial);
-        toeMesh.position.set(.105 + (toe === 0 ? .025 : 0), .005, toe * .038);
-        toeMesh.scale.set(.08, .026, .023);
-        foot.add(toeMesh);
-      }
     }
 
     // 3. Крылья
-    const wingGeo = new THREE.SphereGeometry(0.18, 14, 14);
-    wingGeo.scale(0.5, 2, 0.65);
-    wingGeo.translate(0, -0.12, 0);
+    const wingGeo = new THREE.SphereGeometry(0.18, 24, 20);
+    wingGeo.scale(0.72, 1.55, 0.45);
+    wingGeo.translate(0, -0.08, 0);
 
     const wingLPivot = new THREE.Group();
     wingLPivot.position.set(p.wingPosX, p.wingPosY, p.wingSpreadZ);
@@ -463,7 +486,7 @@ export class Game {
     headPivot.scale.setScalar(p.headScale);
     headGroup.add(headPivot);
 
-    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.48, 24, 24), bodyMat);
+    const headMesh = new THREE.Mesh(new THREE.SphereGeometry(0.48, 32, 28), bodyMat);
     headPivot.add(headMesh);
 
     // 5. Клюв
@@ -472,8 +495,29 @@ export class Game {
     beakPivot.rotation.set(p.beakRotX, p.beakRotY, p.beakRotZ);
     headGroup.add(beakPivot);
 
-    const beakGeometry = new THREE.ConeGeometry(.18, .3, 7);
-    beakGeometry.rotateX(Math.PI / 2);
+    // Округлый клиновидный клюв: высокая спинка у лица и плоский широкий нос.
+    const billSections = [
+      [-.14, 0, 0, .005], [-.12, .14, .045, .005],
+      [-.045, .205, .085, .018], [.065, .17, .055, -.002],
+      [.19, .075, .023, -.023], [.23, 0, 0, -.027]
+    ];
+    const billVertices = [], billIndices = [], billSegments = 32;
+    billSections.forEach(([z, width, height, centerY]) => {
+      for (let segment = 0; segment <= billSegments; segment++) {
+        const angle = segment / billSegments * Math.PI * 2;
+        billVertices.push(Math.cos(angle) * width, centerY + Math.sin(angle) * height, z);
+      }
+    });
+    for (let ring = 0; ring < billSections.length - 1; ring++) {
+      for (let segment = 0; segment < billSegments; segment++) {
+        const a = ring * (billSegments + 1) + segment, b = a + billSegments + 1;
+        billIndices.push(a, a + 1, b, a + 1, b + 1, b);
+      }
+    }
+    const beakGeometry = new THREE.BufferGeometry();
+    beakGeometry.setAttribute('position', new THREE.Float32BufferAttribute(billVertices, 3));
+    beakGeometry.setIndex(billIndices);
+    beakGeometry.computeVertexNormals();
     const beakMesh = new THREE.Mesh(beakGeometry, beakMat);
     beakMesh.scale.set(p.beakScaleX, p.beakScaleY, p.beakScaleZ);
     beakPivot.add(beakMesh);
@@ -488,14 +532,14 @@ export class Game {
       const eye = new THREE.Group();
       eye.position.set(isLeft ? -p.eyeSpread : p.eyeSpread, 0, 0);
 
-      const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.14, 16, 16), scleraMat);
+      const sclera = new THREE.Mesh(new THREE.SphereGeometry(0.14, 24, 20), scleraMat);
       sclera.scale.set(p.eyeWidth, p.eyeHeight, 0.6);
       eye.add(sclera);
 
-      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.065, 12, 12), pupilMat);
+      const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.065, 20, 16), pupilMat);
       pupil.scale.set(0.65, 1.2, 0.4);
       pupil.scale.multiplyScalar(p.pupilScale);
-      pupil.position.set(isLeft ? p.pupilShiftX : -p.pupilShiftX, 0.01, 0.08);
+      pupil.position.set(p.pupilShiftX, 0.01, 0.08);
       eye.add(pupil);
       return eye;
     }
@@ -510,20 +554,60 @@ export class Game {
     headGroup.add(helmetGroup);
 
     const helmetDome = new THREE.Mesh(
-      new THREE.SphereGeometry(0.51, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.47),
+      new THREE.SphereGeometry(0.51, 40, 24, 0, Math.PI * 2, 0, Math.PI / 2),
       helmetMat
     );
     helmetGroup.add(helmetDome);
 
-    const helmetBrim = new THREE.Mesh(new THREE.TorusGeometry(0.5, p.helmetBrimWidth, 10, 28), helmetMat);
+    const helmetBrim = new THREE.Mesh(new THREE.TorusGeometry(0.51, p.helmetBrimWidth, 12, 48), helmetMat);
     helmetBrim.rotation.x = Math.PI / 2;
-    helmetBrim.position.y = 0.02;
+    helmetBrim.scale.set(1, 1, .75);
     helmetGroup.add(helmetBrim);
 
-    const strap = new THREE.Mesh(new THREE.TorusGeometry(0.48, 0.02, 8, 24, Math.PI), strapMat);
-    strap.rotation.z = Math.PI;
-    strap.rotation.y = Math.PI / 2;
-    helmetGroup.add(strap);
+    // Плоская лента огибает подбородок; крепления остаются на щеках при наклоне каски.
+    const strapRig = new THREE.Group();
+    strapRig.matrixAutoUpdate = true;
+    helmetGroup.add(strapRig);
+    const strapCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-.425, .16, .22), new THREE.Vector3(-.405, -.1, .255),
+      new THREE.Vector3(-.29, -.34, .29), new THREE.Vector3(0, -.455, .29),
+      new THREE.Vector3(.29, -.34, .29), new THREE.Vector3(.405, -.1, .255),
+      new THREE.Vector3(.425, .16, .22)
+    ]);
+    const strapVertices = [], strapIndices = [], strapSegments = 40;
+    for (let step = 0; step <= strapSegments; step++) {
+      const center = strapCurve.getPoint(step / strapSegments);
+      const tangent = strapCurve.getTangent(step / strapSegments);
+      const widthAcrossNeck = new THREE.Vector3(0, 0, .031);
+      const thickness = new THREE.Vector3(-tangent.y, tangent.x, 0).normalize().multiplyScalar(.012);
+      for (const [edge, depth] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+        strapVertices.push(
+          center.x + thickness.x * depth,
+          center.y + thickness.y * depth,
+          center.z + widthAcrossNeck.z * edge
+        );
+      }
+      if (step < strapSegments) {
+        for (let face = 0; face < 4; face++) {
+          const a = step * 4 + face, b = step * 4 + (face + 1) % 4;
+          strapIndices.push(a, b, a + 4, b, b + 4, a + 4);
+        }
+      }
+    }
+    strapIndices.push(0, 2, 1, 0, 3, 2);
+    const strapEnd = strapSegments * 4;
+    strapIndices.push(strapEnd, strapEnd + 1, strapEnd + 2, strapEnd, strapEnd + 2, strapEnd + 3);
+    const strapGeometry = new THREE.BufferGeometry();
+    strapGeometry.setAttribute('position', new THREE.Float32BufferAttribute(strapVertices, 3));
+    strapGeometry.setIndex(strapIndices);
+    strapGeometry.computeVertexNormals();
+    strapRig.add(new THREE.Mesh(strapGeometry, strapMat));
+    const strapButtons = [];
+    for (const side of [-1, 1]) {
+      const fastener = new THREE.Mesh(new THREE.SphereGeometry(.058, 20, 16), helmetMat);
+      strapButtons.push(fastener);
+      strapRig.add(fastener);
+    }
 
     // Приводим масштаб фигурки к физическому коллайдеру червяка (0.23, 0.38)
     root.scale.setScalar(p.rootScale);
@@ -540,11 +624,11 @@ export class Game {
 
     // Дублируем меши тела и головы с небольшим масштабом для обводки
     const bodyOutline = new THREE.Mesh(new THREE.SphereGeometry(0.36, 16, 16), outlineMat);
-    bodyOutline.scale.set(p.bodyScaleX * 1.18, p.bodyScaleY * 1.15, p.bodyScaleZ * 1.18);
+    bodyOutline.scale.set(p.bodyScaleX * 1.025, p.bodyScaleY * 1.025, p.bodyScaleZ * 1.025);
     bodyPivot.add(bodyOutline);
 
     const headOutline = new THREE.Mesh(new THREE.SphereGeometry(0.48, 16, 16), outlineMat);
-    headOutline.scale.setScalar(p.headScale * 1.16);
+    headOutline.scale.setScalar(1.018);
     headPivot.add(headOutline);
 
     // Вращающиеся узлы для процедурной анимации
@@ -560,7 +644,10 @@ export class Game {
       eyeGroup,
       eyes,
       helmetGroup,
+      strapRig,
+      strapButtons,
       feetGroup,
+      footPivots,
       wingLPivot,
       wingRPivot,
       wingLMesh,
@@ -611,19 +698,29 @@ export class Game {
     duck.eyeGroup.position.set(0, p.eyePosY, p.eyePosZ);
     duck.eyes.forEach((eye, index) => {
       eye.position.set(index === 0 ? -p.eyeSpread : p.eyeSpread, 0, 0);
+      eye.rotation.set(0, index === 0 ? p.eyeRotY : -p.eyeRotY, 0);
       eye.children[0].scale.set(p.eyeWidth, p.eyeHeight, .6);
-      eye.children[1].scale.set(.65 * p.pupilScale, 1.2 * p.pupilScale, .4 * p.pupilScale);
-      eye.children[1].position.set(index === 0 ? p.pupilShiftX : -p.pupilShiftX, .01, .08);
+      eye.children[1].scale.set(.65 * p.pupilScale, 1.2 * p.pupilScale * p.pupilScaleY, .4 * p.pupilScale);
+      eye.children[1].position.set(p.pupilShiftX, .01, .08);
     });
     duck.helmetGroup.scale.setScalar(p.helmetScale);
     duck.helmetGroup.position.set(0, p.helmetPosY, p.helmetPosZ);
     duck.helmetGroup.rotation.set(p.helmetTiltX, p.helmetTiltY, p.helmetTiltZ);
     duck.helmetGroup.children[1].geometry.dispose();
-    duck.helmetGroup.children[1].geometry = new THREE.TorusGeometry(.5, p.helmetBrimWidth, 10, 28);
+    duck.helmetGroup.children[1].geometry = new THREE.TorusGeometry(.51, p.helmetBrimWidth, 12, 48);
+    duck.strapRig.position.set(p.strapPosX, p.strapPosY, p.strapPosZ);
+    duck.strapRig.rotation.set(p.strapRotX, p.strapRotY, p.strapRotZ);
+    duck.strapRig.scale.set(p.strapScaleX, p.strapScaleY, p.strapScaleZ);
+    duck.strapButtons.forEach((button, index) => {
+      const side = index === 0 ? -1 : 1;
+      button.scale.set(p.strapButtonScaleX, p.strapButtonScaleY, p.strapButtonScaleZ);
+      button.position.set(side * p.strapButtonPosX, p.strapButtonPosY, p.strapButtonPosZ);
+      button.rotation.set(p.strapButtonRotX, p.strapButtonRotY, p.strapButtonRotZ);
+    });
     duck.weaponPivot.position.set(.15, p.wingPosY, p.wingSpreadZ + .05);
-    duck.bodyOutline.scale.set(p.bodyScaleX * 1.18, p.bodyScaleY * 1.15, p.bodyScaleZ * 1.18);
-    duck.headOutline.scale.setScalar(p.headScale * 1.16);
-    duck.feetGroup.position.set(p.feetPosX, p.feetPosY, p.feetPosZ);
+    duck.bodyOutline.scale.set(p.bodyScaleX * 1.025, p.bodyScaleY * 1.025, p.bodyScaleZ * 1.025);
+    duck.headOutline.scale.setScalar(1.018);
+    duck.feetGroup.position.set(p.feetPosX, p.feetPosY - p.bodyPosY, p.feetPosZ);
     duck.feetGroup.rotation.set(p.feetRotX, p.feetRotY, p.feetRotZ);
     duck.feetGroup.scale.set(p.feetScaleX, p.feetScaleY, p.feetScaleZ);
   }
@@ -1924,6 +2021,10 @@ export class Game {
       const isAirborne = !w.grounded;
       const isImpactTumbling = w.knockedDown && Math.hypot(w.vx, w.vy) > .55;
       const isRecovering = !isJetPackFlying && w.recoveryTime > 0;
+      d.footPivots.forEach(({ pivot }) => {
+        pivot.position.y = .15;
+        pivot.rotation.set(0, 0, 0);
+      });
 
       // Отображение оружия у активного стрелка
       const batSwing = this.weapons.pendingBatSwing?.owner === w ? this.weapons.pendingBatSwing : null;
@@ -2018,6 +2119,12 @@ export class Game {
         const step = w.animTime * 11;
         const wobble = Math.sin(step);
         w.mesh.rotation.z = wobble * 0.12;
+        d.footPivots.forEach(({ pivot, side }, index) => {
+          const footPhase = step + index * Math.PI;
+          const stride = Math.sin(footPhase);
+          pivot.position.y = .15 + Math.max(0, Math.cos(footPhase)) * .045;
+          pivot.rotation.set(0, side * stride * .12, stride * .58);
+        });
         d.wingLPivot.rotation.x = Math.cos(step) * 0.4;
         d.wingRPivot.rotation.x = -Math.cos(step) * 0.4;
         d.wingLPivot.rotation.z = p.wingBaseRotZ + Math.abs(wobble) * 0.3;
@@ -2043,7 +2150,7 @@ export class Game {
       } else {
         const breath = Math.sin(w.animTime * 3) * 0.03;
         w.mesh.rotation.z = 0;
-        d.bodyPivot.scale.set(p.bodyScaleX * (1 + breath * 0.3), p.bodyScaleY * (1 - breath), p.bodyScaleZ * (1 + breath * 0.3));
+        d.bodyPivot.scale.set(1 + breath * 0.3, 1 - breath, 1 + breath * 0.3);
         d.headGroup.position.y = p.headPosY - breath * 0.25;
 
         // Если утка держит оружие, приподнимаем крыло, иначе обычное дыхание
@@ -3129,7 +3236,7 @@ export class Game {
       playerControls.append(section);
     }
     const savePlayerParams = () => {
-      try { localStorage.setItem('game-worms-player-model-v3', JSON.stringify(DUCK_PARAMS)); } catch {}
+      try { localStorage.setItem('game-worms-player-model-v11', JSON.stringify(DUCK_PARAMS)); } catch {}
     };
     const applyPlayerParams = () => {
       for (const worm of this.worms || []) if (!worm.trainingTarget && worm.duck?.bodyMesh) this.applyDuckModelParams(worm.duck);
