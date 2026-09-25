@@ -1410,6 +1410,10 @@ button {
   cursor: pointer;
 }
 
+.player-hud-toggle {
+  top: max(98px, calc(env(safe-area-inset-top) + 84px));
+}
+
 .background-hud {
   position: absolute;
   z-index: 19;
@@ -1425,6 +1429,68 @@ button {
   background: rgb(11 29 47 / 94%);
   box-shadow: 0 10px 28px rgb(0 0 0 / 35%), inset 0 1px rgb(255 255 255 / 10%);
   backdrop-filter: blur(10px);
+}
+
+.player-hud {
+  top: max(140px, calc(env(safe-area-inset-top) + 126px));
+  width: min(330px, calc(100% - 24px));
+  max-height: calc(100dvh - 156px);
+}
+
+.player-model-group {
+  margin: 12px 0;
+  padding-top: 8px;
+  border-top: 1px solid rgb(117 158 183 / 35%);
+}
+
+.player-model-group>strong {
+  color: #9fe8ef;
+  font-size: 11px;
+}
+
+.player-model-range {
+  margin: 7px 0;
+}
+
+.player-model-range>span>span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-hud-actions {
+  position: sticky;
+  bottom: -12px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 10px -12px -12px;
+  padding: 9px 12px 12px;
+  border-top: 1px solid #52738a;
+  background: rgb(11 29 47 / 98%);
+}
+
+.player-hud-action {
+  padding: 7px 8px;
+  border: 1px solid #52738a;
+  border-radius: 7px;
+  color: #e9f7ff;
+  background: #17344a;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.player-hud-action:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.player-hud-copy-status {
+  grid-column: 1 / -1;
+  min-height: 12px;
+  color: #9fe8ef;
+  font-size: 10px;
+  text-align: center;
 }
 
 .background-hud-heading {
@@ -2284,6 +2350,13 @@ button {
 
 .worm-label progress::-moz-progress-bar {
   background: #ff3344;
+}
+
+.worm-damage-popup-anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
 }
 
 .worm-damage-popup {

@@ -26,9 +26,10 @@ const TARGET_WEAPONS = new Set(['homing','pigeon','magicBullet','airstrike','nap
 const GUN_WEAPONS = new Set(['handgun','uzi','minigun','longbow']);
 const THROWN_GRENADES = new Set(['grenade','cluster','banana','superBanana','holy']);
 const GROUND_PROJECTILES = new Set(['bazooka','homing','pigeon','magicBullet','mortar','bomb','petrol','mbBomb','donkey','napalm','flameShot','mailstrike','carpet','armageddon','frenchSheep']);
+const NINJA_ROPE_MAX_LENGTH=20;
 export class Weapons {
   constructor(game) {
-    this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.earthquake=null;this.pendingFirePunch=null;this.pendingBatSwing=null;this.pendingAirLaunches=[];this.projectile=null;this.lastSpawnedProjectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillAngle=null;this.movementMode=null;this.jetPackFuel=100;this.hazards=[];this.message='';this.ropeUsePending=false;this.ropeUseOwner=null;this.ropeUseTeam=null;this.ropeUseAirborne=false;this.ropeUseStarted=false;this.ropeUseStartPosition=null;
+    this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.earthquake=null;this.pendingFirePunch=null;this.pendingBatSwing=null;this.pendingAirLaunches=[];this.projectile=null;this.lastSpawnedProjectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillAngle=null;this.movementMode=null;this.ropeMiss=null;this.jetPackFuel=100;this.hazards=[];this.message='';this.ropeUsePending=false;this.ropeUseOwner=null;this.ropeUseTeam=null;this.ropeUseAirborne=false;this.ropeUseStarted=false;this.ropeUseStartPosition=null;
     this.ray=new RAPIER.Ray({x:0,y:0},{x:1,y:0});this.velocity={x:0,y:0};this.target={x:48,y:20};this.targetSet=false;
     this.visualBullets=[];this.bulletGeometry=new THREE.CircleGeometry(.075,10);this.bulletMaterial=new THREE.MeshBasicMaterial({color:0xffe08a,transparent:true,depthWrite:false});
     this.byCollider=new Map();this.pool=[];this.geometry=new THREE.PlaneGeometry(1,1);
@@ -184,7 +185,7 @@ export class Weapons {
     }
   }
   busy(){
-    if(this.pendingAirLaunches.length||this.pendingBatSwing||this.drilling>0||this.retreat>0||this.movementMode||this.burst||this.flame||this.kamikaze||this.earthquake||this.pendingFirePunch||this.hazards.some(h=>h.kind==='fire'))return true;
+    if(this.pendingAirLaunches.length||this.pendingBatSwing||this.drilling>0||this.retreat>0||this.movementMode||this.ropeMiss||this.burst||this.flame||this.kamikaze||this.earthquake||this.pendingFirePunch||this.hazards.some(h=>h.kind==='fire'))return true;
     for(const p of this.pool){
       if(!p.active||(p.type==='arrow'&&p.stuck))continue;
       if(p.type!=='mine')return true;
@@ -378,7 +379,7 @@ export class Weapons {
     const x=(g.keys.has('KeyD')||g.keys.has('ArrowRight')?1:0)-(g.keys.has('KeyA')||g.keys.has('ArrowLeft')?1:0);
     const y=(g.keys.has('KeyW')||g.keys.has('ArrowUp')?1:0)-(g.keys.has('KeyS')||g.keys.has('ArrowDown')?1:0);
     const v=w.body.linvel(),pos=w.body.translation();
-    if(!w.grounded)m.airborne=true;
+    if(!w.grounded&&m.mode!=='bungee')m.airborne=true;
     if(m.mode==='jetPack'){
       if(x||y>0||m.retreat){m.remaining-=dt*4;this.jetPackFuel=THREE.MathUtils.clamp(m.remaining/30*100,0,100);}
       w.body.setLinvel({x:THREE.MathUtils.clamp(v.x+x*18*dt,-7,7),y:THREE.MathUtils.clamp(v.y+Math.max(0,y)*24*dt,-9,8)},true);
@@ -389,7 +390,7 @@ export class Weapons {
       if(m.airborne&&w.grounded){this.endUtility();return;}
       m.remaining-=dt;
     }else if(m.mode==='rope'){
-      m.length=THREE.MathUtils.clamp(m.length-y*5*dt,1.5,35);
+      m.length=THREE.MathUtils.clamp(m.length-y*5*dt,1.5,NINJA_ROPE_MAX_LENGTH);
       const dx=pos.x-m.anchor.x,dy=pos.y-m.anchor.y,d=Math.max(.01,Math.hypot(dx,dy)),nx=dx/d,ny=dy/d;
       const outward=Math.max(0,v.x*nx+v.y*ny),stretch=Math.max(0,d-m.length),pull=stretch*100+outward*(d>=m.length?10:0);
       w.body.applyImpulse({x:(x*8-nx*pull)*dt*w.body.mass(),y:-ny*pull*dt*w.body.mass()},true);
@@ -400,7 +401,17 @@ export class Weapons {
       this.message='A/D или ←/→ — раскачиваться · W/S — длина верёвки · пробел — отпустить';
       m.remaining-=dt;
     }else if(m.mode==='bungee'){
-      if(m.mode==='bungee'&&!m.airborne){m.anchor={x:pos.x,y:pos.y};return;}
+      if(w.grounded){
+        if(m.jumped)m.jumped=false;
+        const groundY=g.terrain?.landingHeight(pos.x,.08,0);
+        if(w.grounded&&Number.isFinite(groundY))m.anchor={x:pos.x,y:groundY};
+        this.tether.visible=false;
+        this.message='A/D или ←/→ — идти к краю; банджи зацепится при падении с края';
+        return;
+      }
+      if(v.y>.35)m.jumped=true;
+      if(m.jumped||v.y>=-.1){this.tether.visible=false;this.message='Банджи цепляется только при падении с края';return;}
+      m.airborne=true;
       m.length=THREE.MathUtils.clamp(m.length-y*5*dt,1.5,35);
       m.path=m.path||[{x:m.anchor.x,y:m.anchor.y}];
       while(m.path.length>1&&!this.ropeSegmentBlocked(m.path[m.path.length-2],pos,w))m.path.pop();
@@ -431,7 +442,7 @@ export class Weapons {
     w.grounded=false;w.airbornePeakY=w.y;
   }
   fire(type,charge) {
-    const g=this.g,w=g.active,dx=Math.cos(g.angle),dy=Math.sin(g.angle),baseSpeed=8+charge*24,speed=baseSpeed*(THROWN_GRENADES.has(type)?1.2:1);
+    const g=this.g,w=g.active,dx=Math.cos(g.angle),dy=Math.sin(g.angle),baseSpeed=this.needsCharge(type)?0.25+charge*31.75:8+charge*24,speed=baseSpeed*(THROWN_GRENADES.has(type)?1.2:1);
     this.lastSpawnedProjectile=null;
     this.message='';
     if(!Object.hasOwn(ARSENAL,type)&&type!=='uppercut'){this.message='Неизвестное оружие';return false;}
@@ -497,15 +508,21 @@ export class Weapons {
       g.turn.settle();return true;
     }
     if(type==='ninjaRope'){
+      this.ropeMiss=null;
       g.audio?.play('ninjaRopeLaunch',.2);
       this.ray.origin={x:w.x,y:w.y};this.ray.dir={x:dx,y:dy};
-      const hit=g.world.castRay(this.ray,35,true,undefined,undefined,w.collider,w.body,c=>!g.wormByCollider.has(c.handle)&&!this.byCollider.has(c.handle));
-      if(!hit){this.tether.visible=false;this.message='Канат не достал до поверхности';return false;}
+      const hit=g.world.castRay(this.ray,NINJA_ROPE_MAX_LENGTH,true,undefined,undefined,w.collider,w.body,c=>!g.wormByCollider.has(c.handle)&&!this.byCollider.has(c.handle));
+      if(!hit){this.ropeMiss={x:w.x,y:w.y,dx,dy,length:NINJA_ROPE_MAX_LENGTH,age:0};this.message='Канат не достал до поверхности';return false;}
       const anchor={x:w.x+dx*hit.timeOfImpact,y:w.y+dy*hit.timeOfImpact};
       if(!this.ropeUsePending){this.ropeUsePending=true;this.ropeUseOwner=w;this.ropeUseTeam=w.team;this.ropeUseAirborne=false;this.ropeUseStarted=true;this.ropeUseStartPosition={x:w.x,y:w.y};}
       this.beginUtility('rope');Object.assign(this.movementMode,{anchor,length:Math.max(1.5,hit.timeOfImpact),swingLastAngle:undefined,swingDirection:0,swingTurnCooldown:0});this.updateTether([anchor,{x:w.x,y:w.y}]);this.continueTurn();return true;
     }
-    if(type==='bungee'){g.audio?.play('bungeeStart');this.beginUtility('bungee');Object.assign(this.movementMode,{anchor:{x:w.x,y:w.y},length:4});return true;}
+    if(type==='bungee'){
+      if(!w.grounded){this.message='Банджи можно активировать только на земле';return false;}
+      const groundY=g.terrain?.landingHeight(w.x,.08,0);
+      if(!Number.isFinite(groundY)){this.message='Для банджи нужна твёрдая поверхность';return false;}
+      g.audio?.play('bungeeStart');this.beginUtility('bungee');Object.assign(this.movementMode,{anchor:{x:w.x,y:groundY},length:4,jumped:false});return true;
+    }
     if(type==='parachute'){this.beginUtility('parachute');return true;}
     if(type==='jetPack'){this.beginUtility('jetPack',30);return true;}
     if(type==='uppercut'){
@@ -641,6 +658,7 @@ export class Weapons {
   getProjectileLightData(){return this.projectileGlintData;}
   update(dt) {
     const g=this.g;
+    if(this.ropeMiss){const miss=this.ropeMiss;miss.age+=dt;const extension=THREE.MathUtils.clamp(miss.age/.22,0,1),end={x:miss.x+miss.dx*miss.length*extension,y:miss.y+miss.dy*miss.length*extension};this.updateTether([{x:miss.x,y:miss.y},end]);if(miss.age>=.28){this.ropeMiss=null;this.tether.visible=false;}}
     for(let i=this.pendingAirLaunches.length-1;i>=0;i--){const pending=this.pendingAirLaunches[i];pending.remaining-=dt;if(pending.remaining<=0){this.pendingAirLaunches.splice(i,1);pending.launch();}}
     if(this.pendingBatSwing){const swing=this.pendingBatSwing;swing.elapsed+=dt;if(!swing.hit&&swing.elapsed>=.29){swing.hit=true;this.resolveBatSwing(swing);}if(swing.elapsed>=.52)this.pendingBatSwing=null;}
     if(this.pendingFirePunch&&(this.pendingFirePunch.audio.ended||this.pendingFirePunch.audio.playFailed)){

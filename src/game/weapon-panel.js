@@ -185,6 +185,7 @@ export class WeaponPanel {
   select(id) {
     if (!this.canSelect()) return;
     if (!this.game.canUseWeapon(id)) return;
+    if (id !== 'ninjaRope' && this.game.weapons.movementMode?.mode === 'rope') this.game.weapons.endUtility();
     this.game.turn.weapon = id;
     if (id === 'girder' || id === 'girderPack') this.game.angle = 0;
     this.weaponBeforeAnglePreview = null;

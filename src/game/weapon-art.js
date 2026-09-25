@@ -12,6 +12,7 @@ const AIM_ART_ANGLES = Object.freeze({
   uzi: 5,
   minigun: 8,
   longbow: 27,
+  baseballBat: 34,
   prod: 20,
   flamethrower: 3,
   magicBullet: 45

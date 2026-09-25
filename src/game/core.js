@@ -93,6 +93,7 @@ export class TurnMachine {
     g.turnIntroTime = 1.8;
     g.audio?.play('turnIndicator');
     g.activeMoved = false; // <-- Сбрасываем флаг движения для нового хода
+    g.turnMarkerDismissed = false;
     g.wind = g.windEnabled ? (Math.random() * 2 - 1) * WIND_MAX : 0;
     for (const worm of g.worms) if (worm.team === this.team) { worm.frozen = false; worm.speedBoost = false; worm.invisible = false; worm.laserSight = false; }
     for (const worm of g.worms) if (worm.alive && !worm.frozen && (worm.poison || worm.radiation)) g.damage(worm, Math.min(worm.hp - 1, 2), false, false);
@@ -112,6 +113,7 @@ export class TurnMachine {
     this.game.cameraFocus = null;
     this.state = TURN.ACTION_RESOLVING;
     if (this.game.weapons.fire(usedWeapon, this.charge) === false) { this.state = TURN.WAITING_INPUT; this.charge = 0; return; }
+    this.game.turnMarkerDismissed = true;
     if (!WEAPONS_WITH_CUSTOM_SHOT_SFX.has(usedWeapon)) {
       const launchAudio = this.game.audio?.play('energyShot');
       this.game.weapons.attachLaunchAudio(this.game.weapons.lastSpawnedProjectile, launchAudio);
