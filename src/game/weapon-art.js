@@ -36,9 +36,21 @@ const litMaterial = (options = {}) => new THREE.MeshPhongMaterial({
   side: THREE.DoubleSide,
   ...options
 });
+function makeMirroredTexture(sourceCanvas) {
+  const canvas = document.createElement('canvas');
+  canvas.width = sourceCanvas.width;
+  canvas.height = sourceCanvas.height;
+  const context = canvas.getContext('2d');
+  context.translate(canvas.width, 0);
+  context.scale(-1, 1);
+  context.drawImage(sourceCanvas, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
 
 export class WeaponArt {
-  constructor(ids) { this.ids = ids; this.textures = new Map(); this.equipmentTextures = new Map(); this.flameTexture = null; this.arrowSpriteTexture = null; this.dragonBallSpriteTexture = null; this.superSheepFlightTexture = null; this.detachedSmoke = []; this.aimAngleOverrides = readAimAngleOverrides(); }
+  constructor(ids) { this.ids = ids; this.textures = new Map(); this.mirroredTextures = new Map(); this.depthTextures = new Map(); this.mirroredDepthTextures = new Map(); this.equipmentTextures = new Map(); this.flameTexture = null; this.arrowSpriteTexture = null; this.dragonBallSpriteTexture = null; this.superSheepFlightTexture = null; this.detachedSmoke = []; this.aimAngleOverrides = readAimAngleOverrides(); }
   async load() {
     const image = new Image();
     image.src = `${import.meta.env.BASE_URL}assets/weapon-atlas.png`;
@@ -73,6 +85,20 @@ export class WeaponArt {
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       this.textures.set(id, texture);
+      this.mirroredTextures.set(id, makeMirroredTexture(canvas));
+
+      // Тёмный контур под плоской иконкой создаёт тонкую тень и ощущение толщины.
+      const depthCanvas = document.createElement('canvas');
+      depthCanvas.width = width; depthCanvas.height = height;
+      const depthContext = depthCanvas.getContext('2d');
+      depthContext.drawImage(canvas, 0, 0);
+      depthContext.globalCompositeOperation = 'source-in';
+      depthContext.fillStyle = '#302a23';
+      depthContext.fillRect(0, 0, width, height);
+      const depthTexture = new THREE.CanvasTexture(depthCanvas);
+      depthTexture.colorSpace = THREE.SRGBColorSpace;
+      this.depthTextures.set(id, depthTexture);
+      this.mirroredDepthTextures.set(id, makeMirroredTexture(depthCanvas));
     });
 
     const flyingSheepImage = new Image();
@@ -144,7 +170,8 @@ export class WeaponArt {
   aimArtAngles() {
     return Object.fromEntries(this.ids.map(type => [type, Math.round(this.aimArtAngle(type) * 1800 / Math.PI) / 10]));
   }
-  texture(type) { return this.textures.get(ALIASES[type] || type); }
+  texture(type, mirrored = false) { return (mirrored ? this.mirroredTextures : this.textures).get(ALIASES[type] || type); }
+  depthTexture(type, mirrored = false) { return (mirrored ? this.mirroredDepthTextures : this.depthTextures).get(ALIASES[type] || type); }
   equipmentTexture(type) { return this.equipmentTextures.get(type); }
   dimensions(type, size) {
     const image = this.texture(type).image, longest = Math.max(image.width, image.height);
@@ -163,8 +190,45 @@ export class WeaponArt {
       const small = plane(.07, .07, { color: 0xc7ddd9 }, .01); small.position.set(-.53, -.87, .01);
     }
     const [width, height] = this.dimensions(type, thought ? .88 : 1.05);
+    if (!thought) {
+      const addBillboard = (map, spriteWidth, spriteHeight, x, y, z, renderOrder, textureKind) => {
+        const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+          map,
+          color: 0xffffff,
+          transparent: true,
+          alphaTest: .08,
+          depthTest: false,
+          depthWrite: false
+        }));
+        sprite.position.set(x, y, z);
+        sprite.scale.set(spriteWidth, spriteHeight, 1);
+        sprite.renderOrder = renderOrder;
+        sprite.userData.baseScaleX = spriteWidth;
+        sprite.userData.weaponType = type;
+        sprite.userData.textureKind = textureKind;
+        group.add(sprite);
+        (group.userData.billboardSprites ||= []).push(sprite);
+        return sprite;
+      };
+      const depthTexture = this.depthTexture(type);
+      if (depthTexture) {
+        for (let layer = 3; layer >= 1; layer--) {
+          addBillboard(
+            depthTexture,
+            width * 1.025,
+            height * 1.025,
+            .37 - layer * .008,
+            -layer * .012,
+            .008 + layer * .003,
+            21 + layer,
+            'depth'
+          );
+        }
+      }
+      addBillboard(this.texture(type), width, height, .37, 0, .02, 30, 'weapon');
+      return group;
+    }
     const icon = plane(width, height, { map: this.texture(type), transparent: true, alphaTest: .08 }, .02);
-    if (!thought) icon.position.x = .37;
     return group;
   }
   createEquipment(type) {
@@ -617,5 +681,8 @@ export class WeaponArt {
 export function disposeWeaponMesh(mesh) {
   if (!mesh) return;
   mesh.removeFromParent();
-  mesh.traverse(node => { if (node.isMesh) { node.geometry.dispose(); node.material.dispose(); } });
+  mesh.traverse(node => {
+    if (node.isMesh) node.geometry.dispose();
+    if (node.isMesh || node.isSprite) node.material.dispose();
+  });
 }

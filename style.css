@@ -1297,6 +1297,30 @@ button {
   background: rgb(9 12 40 / 72%);
 }
 
+.head-rotation-debug {
+  position: absolute;
+  z-index: 24;
+  top: max(12px, env(safe-area-inset-top));
+  left: 50%;
+  display: flex;
+  gap: 14px;
+  padding: 6px 12px;
+  transform: translateX(-50%);
+  border: 1px solid rgb(121 174 195 / 55%);
+  border-radius: 8px;
+  color: #d9edf4;
+  background: rgb(11 29 47 / 88%);
+  box-shadow: 0 5px 18px rgb(0 0 0 / 30%);
+  font: 600 12px/1.2 system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.head-rotation-debug output {
+  color: #ffd979;
+}
+
 .wind-hud {
   position: absolute;
   z-index: 6;
@@ -1414,6 +1438,10 @@ button {
   top: max(98px, calc(env(safe-area-inset-top) + 84px));
 }
 
+.animation-hud-toggle {
+  top: max(134px, calc(env(safe-area-inset-top) + 120px));
+}
+
 .background-hud {
   position: absolute;
   z-index: 19;
@@ -1437,6 +1465,125 @@ button {
   max-height: calc(100dvh - 156px);
 }
 
+.animation-hud {
+  top: max(176px, calc(env(safe-area-inset-top) + 162px));
+  width: min(330px, calc(100% - 24px));
+  max-height: calc(100dvh - 192px);
+}
+
+.player-animation-check {
+  align-items: center;
+}
+
+.duck-animation-playback {
+  position: sticky;
+  top: -13px;
+  z-index: 2;
+  margin: 8px -12px 9px;
+  padding: 9px 12px 8px;
+  border-top: 1px solid rgb(117 158 183 / 35%);
+  border-bottom: 1px solid rgb(117 158 183 / 35%);
+  background: rgb(11 29 47 / 98%);
+}
+
+.duck-animation-playback>strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #8ee0d5;
+  font-size: 11px;
+}
+
+.duck-animation-playback .background-hud-range {
+  margin: 5px 0;
+}
+
+.duck-animation-actions,
+.duck-animation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.duck-animation-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.duck-animation-actions button,
+.duck-animation-grid button {
+  min-width: 0;
+  padding: 5px;
+  font-size: 10px;
+  line-height: 1.25;
+}
+
+.duck-animation-actions button {
+  grid-column: span 1;
+}
+
+.duck-animation-group summary {
+  padding-top: 8px;
+}
+
+.duck-animation-grid button[aria-pressed="true"],
+.duck-animation-actions button[aria-pressed="true"] {
+  border-color: #87e5cd;
+  background: #286459;
+}
+
+.animation-hud .duck-animation-grid button {
+  min-height: 34px;
+}
+
+/* Keep the animation panel readable and inside the viewport on narrow screens. */
+.background-hud.animation-hud {
+  box-sizing: border-box;
+  right: max(12px, env(safe-area-inset-right));
+  width: min(360px, calc(100% - 24px));
+  overflow-x: hidden;
+}
+
+.animation-hud *,
+.animation-hud *::before,
+.animation-hud *::after {
+  box-sizing: border-box;
+}
+
+.animation-hud .duck-animation-grid button,
+.animation-hud .duck-animation-actions button {
+  width: 100%;
+  min-height: 36px;
+  border: 1px solid #45677a;
+  border-radius: 6px;
+  color: #e6f5f8;
+  background: #173448;
+  box-shadow: none;
+  text-align: center;
+  overflow-wrap: anywhere;
+  transition: background-color .14s ease, border-color .14s ease;
+}
+
+.animation-hud .duck-animation-grid button:hover,
+.animation-hud .duck-animation-actions button:hover {
+  border-color: #70cfc4;
+  background: #214b5a;
+}
+
+.animation-hud .duck-animation-grid button[aria-pressed="true"],
+.animation-hud .duck-animation-actions button[aria-pressed="true"] {
+  border-color: #87e5cd;
+  color: #fff;
+  background: #286459;
+}
+
+.animation-hud .duck-animation-group summary {
+  color: #d9edf4;
+  cursor: pointer;
+}
+
+.animation-hud .duck-animation-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .player-model-group {
   margin: 12px 0;
   padding-top: 8px;
@@ -1446,6 +1593,17 @@ button {
 .player-model-group>strong {
   color: #9fe8ef;
   font-size: 11px;
+}
+
+.player-model-rotation-group .background-hud-range {
+  margin-top: 8px;
+}
+
+.player-angle-hint {
+  display: block;
+  margin-top: -3px;
+  color: #9ab7c7;
+  font-size: 10px;
 }
 
 .player-model-range {

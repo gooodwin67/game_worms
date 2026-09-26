@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Утка — стенд модели и анимаций</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; min-height: 100vh; overflow: hidden; color: #eef7f8; background: radial-gradient(ellipse at 48% 42%, #173243 0, #0c1924 42%, #060b12 100%); }
+    #stage { position: fixed; inset: 0; }
+    #stage canvas { width: 100%; height: 100%; display: block; touch-action: none; cursor: grab; }
+    #stage canvas:active { cursor: grabbing; }
+    .topline { position: fixed; z-index: 2; top: 18px; left: 50%; transform: translateX(-50%); text-align: center; pointer-events: none; text-shadow: 0 2px 12px #000; }
+    .topline strong { display: block; letter-spacing: .18em; font-size: 13px; color: #a6d9d7; }
+    .topline span { display: block; margin-top: 5px; color: #93aab4; font-size: 11px; }
+    .panel { position: fixed; z-index: 3; top: 16px; width: min(310px, calc(100vw - 24px)); max-height: calc(100vh - 32px); overflow: auto; padding: 13px; border: 1px solid #476274; border-radius: 14px; background: rgb(8 21 32 / 91%); box-shadow: 0 14px 42px #0008, inset 0 1px #ffffff12; backdrop-filter: blur(14px); scrollbar-color: #456174 #0a1721; }
+    #animations { left: 16px; width: min(250px, calc(100vw - 24px)); }
+    #model { right: 16px; width: min(330px, calc(100vw - 24px)); }
+    .panel h1 { margin: 0 0 3px; color: #a7e6e0; font-size: 12px; letter-spacing: .13em; }
+    .subhead { margin: 0 0 12px; color: #869eaa; font-size: 10px; line-height: 1.5; }
+    .anim-row { display: flex; align-items: center; gap: 9px; min-height: 35px; padding: 5px 4px; border-top: 1px solid #ffffff12; color: #dce8ed; font-size: 12px; cursor: pointer; }
+    .anim-row input { width: 15px; height: 15px; margin: 0; accent-color: #64d5c9; }
+    details { border-top: 1px solid #ffffff19; }
+    summary { padding: 10px 2px 7px; color: #b9e5e4; font-size: 11px; font-weight: 700; cursor: pointer; list-style-position: inside; }
+    .control { display: block; margin: 7px 1px 10px; }
+    .control-title { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 3px; color: #d5e2e7; font-size: 10px; }
+    .control output { color: #8ee0d5; font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; height: 14px; margin: 0; accent-color: #63d6ca; }
+    .actions { position: sticky; bottom: -13px; display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin: 11px -13px -13px; padding: 10px 13px 13px; border-top: 1px solid #476274; background: #091622f5; }
+    button { min-height: 32px; padding: 6px 8px; border: 1px solid #476b7c; border-radius: 8px; color: #e9f8f8; background: #173448; font: inherit; font-size: 10px; font-weight: 700; cursor: pointer; }
+    button:hover { background: #205063; }
+    button:disabled { opacity: .45; cursor: default; }
+    #copy-status { grid-column: 1 / -1; min-height: 12px; color: #8ee0d5; text-align: center; font-size: 10px; }
+    .hint { position: fixed; bottom: 15px; left: 50%; transform: translateX(-50%); color: #8da6b0; font-size: 10px; text-align: center; pointer-events: none; }
+    @media (max-width: 720px) {
+      body { overflow: auto; }
+      #stage { position: fixed; inset: 0; }
+      .topline { top: 8px; }
+      .panel { top: auto; bottom: 10px; max-height: min(43vh, 360px); padding: 10px; }
+      #animations { left: 8px; width: min(190px, calc(45vw - 10px)); }
+      #model { right: 8px; width: min(255px, calc(55vw - 10px)); }
+      .hint { bottom: calc(min(43vh, 360px) + 16px); width: 100%; }
+    }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.185.1/build/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="stage"></div>
+  <header class="topline"><strong>СТЕНД МОДЕЛИ ИГРОКА</strong><span>Одна утка · Three.js</span></header>
+  <aside class="panel" id="animations" aria-label="Анимации утки">
+    <h1>АНИМАЦИИ</h1><p class="subhead">Переключай движения независимо друг от друга.</p>
+    <label class="anim-row"><input type="checkbox" data-animation="cursorEyes" checked><span>Глаза следят за курсором</span></label>
+    <label class="anim-row"><input type="checkbox" data-animation="blink" checked><span>Моргание</span></label>
+    <label class="anim-row"><input type="checkbox" data-animation="dance"><span>Танец</span></label>
+  </aside>
+  <aside class="panel" id="model" aria-label="Настройки модели утки">
+    <h1>МОДЕЛЬ УТКИ</h1><p class="subhead">Размер, положение и поворот частей тела. Изменения можно скопировать в JSON.</p>
+    <div id="controls"></div>
+    <div class="actions"><button id="undo" type="button" disabled>Отменить изменение</button><button id="copy" type="button">Копировать JSON</button><output id="copy-status" aria-live="polite"></output></div>
+  </aside>
+  <div class="hint">Перетаскивай сцену для поворота · колёсико для приближения · двигай мышью для взгляда утки</div>
+
+  <script type="module">
+    import * as THREE from 'three';
+
+    const params = {
+      bodyScaleX:1.08, bodyScaleY:1.02, bodyScaleZ:1, bodyPosY:.43, bodyRotX:0, bodyRotY:0, bodyRotZ:0,
+      headScale:1, headPosX:.01, headPosY:1.16, headPosZ:-.01, headRotX:0, headRotY:.66, headRotZ:.01,
+      beakScaleX:1, beakScaleY:1, beakScaleZ:1, beakPosY:-.22, beakPosZ:.48, beakRotX:0, beakRotY:0, beakRotZ:0,
+      eyeScale:1.4, eyeRotY:-.121592653589793, eyeWidth:.86, eyeHeight:1.3, eyeSpread:.1, eyePosY:.045, eyePosZ:.405,
+      pupilScale:.74, pupilScaleY:1.07, pupilShiftX:.01,
+      helmetScale:1.12, helmetPosY:.06, helmetPosZ:.01, helmetTiltX:-.611592653589793, helmetTiltY:0, helmetTiltZ:.008407346410207, helmetBrimWidth:.045,
+      strapScaleX:1.03, strapScaleY:.92, strapScaleZ:1.1, strapPosX:.01, strapPosY:-.05, strapPosZ:-.23, strapRotX:.238407346410207, strapRotY:.008407346410207, strapRotZ:.008407346410207,
+      strapButtonScaleX:.99, strapButtonScaleY:1.13, strapButtonScaleZ:.49, strapButtonPosX:.43, strapButtonPosY:.01, strapButtonPosZ:.25,
+      strapButtonRotX:.108407346410207, strapButtonRotY:-.791592653589793, strapButtonRotZ:.238407346410207,
+      wingScaleY:.68, wingScaleXZ:.8, wingSpreadZ:.32, wingPosY:.46, wingPosX:-.14, wingBaseRotZ:.338407346410207, wingBaseRotY:-.191592653589793,
+      tailScale:1, tailPosX:-.45, tailPosY:.42, tailRotZ:.958407346410207, tailRotY:-.061592653589793,
+      rootScale:1.13, rootPosY:-.67, feetScaleX:1, feetScaleY:1, feetScaleZ:1, feetPosX:0, feetPosY:-.12, feetPosZ:0, feetRotX:0, feetRotY:0, feetRotZ:0
+    };
+    const labels = {
+      bodyScaleX:'Размер туловища X',bodyScaleY:'Размер туловища Y',bodyScaleZ:'Размер туловища Z',bodyPosY:'Положение туловища Y',bodyRotX:'Поворот туловища X',bodyRotY:'Поворот туловища Y',bodyRotZ:'Поворот туловища Z',
+      headScale:'Размер головы',headPosX:'Положение головы X',headPosY:'Положение головы Y',headPosZ:'Положение головы Z',headRotX:'Поворот головы X',headRotY:'Поворот головы Y',headRotZ:'Поворот головы Z',
+      beakScaleX:'Размер клюва X',beakScaleY:'Размер клюва Y',beakScaleZ:'Размер клюва Z',beakPosY:'Положение клюва Y',beakPosZ:'Положение клюва Z',beakRotX:'Поворот клюва X',beakRotY:'Поворот клюва Y',beakRotZ:'Поворот клюва Z',
+      eyeScale:'Общий размер глаз',eyeRotY:'Поворот глаз Y',eyeWidth:'Ширина глаз',eyeHeight:'Высота глаз',eyeSpread:'Расстояние между глазами',eyePosY:'Положение глаз Y',eyePosZ:'Положение глаз Z',pupilScale:'Размер зрачков',pupilScaleY:'Высота зрачков',pupilShiftX:'Смещение зрачков X',
+      helmetScale:'Размер каски',helmetPosY:'Положение каски Y',helmetPosZ:'Положение каски Z',helmetTiltX:'Наклон каски X',helmetTiltY:'Наклон каски Y',helmetTiltZ:'Наклон каски Z',helmetBrimWidth:'Толщина обода каски',
+      strapScaleX:'Размер ремешка X',strapScaleY:'Размер ремешка Y',strapScaleZ:'Размер ремешка Z',strapPosX:'Положение ремешка X',strapPosY:'Положение ремешка Y',strapPosZ:'Положение ремешка Z',strapRotX:'Поворот ремешка X',strapRotY:'Поворот ремешка Y',strapRotZ:'Поворот ремешка Z',
+      strapButtonScaleX:'Размер пуговиц X',strapButtonScaleY:'Размер пуговиц Y',strapButtonScaleZ:'Размер пуговиц Z',strapButtonPosX:'Положение пуговиц X',strapButtonPosY:'Положение пуговиц Y',strapButtonPosZ:'Положение пуговиц Z',strapButtonRotX:'Поворот пуговиц X',strapButtonRotY:'Поворот пуговиц Y',strapButtonRotZ:'Поворот пуговиц Z',
+      wingScaleY:'Размер крыла Y',wingScaleXZ:'Размер крыльев X/Z',wingSpreadZ:'Разнос крыльев Z',wingPosY:'Положение крыльев Y',wingPosX:'Положение крыльев X',wingBaseRotZ:'Поворот крыльев Z',wingBaseRotY:'Поворот крыльев Y',
+      tailScale:'Размер хвоста',tailPosX:'Положение хвоста X',tailPosY:'Положение хвоста Y',tailRotZ:'Поворот хвоста Z',tailRotY:'Поворот хвоста Y',
+      rootScale:'Общий размер игрока',rootPosY:'Смещение всей модели Y',feetScaleX:'Размер лапок X',feetScaleY:'Размер лапок Y',feetScaleZ:'Размер лапок Z',feetPosX:'Положение лапок X',feetPosY:'Положение лапок Y',feetPosZ:'Положение лапок Z',feetRotX:'Поворот лапок X',feetRotY:'Поворот лапок Y',feetRotZ:'Поворот лапок Z'
+    };
+    const groups = [
+      ['Общий размер и положение',['rootScale','rootPosY']],['Туловище',Object.keys(params).filter(k=>k.startsWith('body'))],
+      ['Голова',Object.keys(params).filter(k=>k.startsWith('head'))],['Клюв',Object.keys(params).filter(k=>k.startsWith('beak'))],
+      ['Глаза и зрачки',Object.keys(params).filter(k=>k.startsWith('eye')||k.startsWith('pupil'))],['Каска',Object.keys(params).filter(k=>k.startsWith('helmet'))],
+      ['Ремешок',Object.keys(params).filter(k=>k.startsWith('strap')&&!k.startsWith('strapButton'))],['Пуговицы ремешка',Object.keys(params).filter(k=>k.startsWith('strapButton'))],
+      ['Крылья',Object.keys(params).filter(k=>k.startsWith('wing'))],['Хвост',Object.keys(params).filter(k=>k.startsWith('tail'))],['Лапки',Object.keys(params).filter(k=>k.startsWith('feet'))]
+    ];
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x08131c);
+    const camera = new THREE.PerspectiveCamera(34, innerWidth/innerHeight, .1, 100);
+    let orbitYaw = .18, orbitPitch = .16, cameraRadius = 6.2;
+    const cameraTarget = new THREE.Vector3(0,.72,0);
+    const renderer = new THREE.WebGLRenderer({antialias:true,alpha:false});
+    renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+    renderer.setSize(innerWidth,innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.12;
+    document.querySelector('#stage').append(renderer.domElement);
+    scene.add(new THREE.HemisphereLight(0xd8efff,0x362b22,2.05));
+    const keyLight = new THREE.DirectionalLight(0xffe0ad,3.2); keyLight.position.set(-3,5,6); scene.add(keyLight);
+    const fillLight = new THREE.DirectionalLight(0x74c9d5,1.35); fillLight.position.set(4,1,3); scene.add(fillLight);
+
+    const root = new THREE.Group(); scene.add(root);
+    const bodyMat = new THREE.MeshLambertMaterial({color:0x34bba7});
+    const beakMat = new THREE.MeshPhongMaterial({color:0xffb51b,specular:0x443015,shininess:24});
+    const scleraMat = new THREE.MeshLambertMaterial({color:0xfff4e5});
+    const pupilMat = new THREE.MeshBasicMaterial({color:0x11161b});
+    const wingMat = new THREE.MeshPhongMaterial({color:0x7864bd,specular:0x29213b,shininess:18});
+    const helmetMat = new THREE.MeshPhongMaterial({color:0x606b36,specular:0x383d20,shininess:22,side:THREE.DoubleSide});
+    const strapMat = new THREE.MeshPhongMaterial({color:0x3c4224,specular:0x202313,shininess:16,side:THREE.DoubleSide});
+    const bodyPivot = new THREE.Group(); root.add(bodyPivot);
+    const body = new THREE.Mesh(new THREE.SphereGeometry(.36,32,24),bodyMat); bodyPivot.add(body);
+    const bodyOutline = new THREE.Mesh(new THREE.SphereGeometry(.36,24,18),new THREE.MeshBasicMaterial({color:0x050508,side:THREE.BackSide})); bodyPivot.add(bodyOutline);
+    const tailPivot = new THREE.Group(); root.add(tailPivot);
+    const tail = new THREE.Mesh(new THREE.SphereGeometry(.12,24,18),bodyMat); tail.scale.set(.9,1.25,.85); tailPivot.add(tail);
+    const feetGroup = new THREE.Group(); bodyPivot.add(feetGroup);
+    const footPivots=[];
+    const legMat = new THREE.MeshLambertMaterial({color:0xe88c16});
+    const footMat = new THREE.MeshPhongMaterial({color:0xffa51b,specular:0x4b3112,shininess:22});
+    for(const side of [-1,1]){
+      const x=side<0?.08:-.07, pivot=new THREE.Group(); pivot.position.set(x,.15,side*.15); feetGroup.add(pivot); footPivots.push({pivot,side});
+      pivot.add(new THREE.Mesh(new THREE.CapsuleGeometry(.046,.09,6,12),legMat));
+      const web=new THREE.Mesh(new THREE.SphereGeometry(1,24,16),footMat); web.position.set(.035,-.095,0); web.scale.set(.18,.055,.105); pivot.add(web);
+    }
+    const wingGeo=new THREE.SphereGeometry(.18,24,20); wingGeo.scale(.72,1.55,.45); wingGeo.translate(0,-.08,0);
+    const wingLPivot=new THREE.Group(), wingRPivot=new THREE.Group(); root.add(wingLPivot,wingRPivot);
+    wingLPivot.add(new THREE.Mesh(wingGeo,wingMat)); wingRPivot.add(new THREE.Mesh(wingGeo,wingMat));
+    const headGroup=new THREE.Group(); root.add(headGroup);
+    const headPivot=new THREE.Group(); headGroup.add(headPivot);
+    headPivot.add(new THREE.Mesh(new THREE.SphereGeometry(.48,32,28),bodyMat));
+    headPivot.add(new THREE.Mesh(new THREE.SphereGeometry(.48,24,18),new THREE.MeshBasicMaterial({color:0x050508,side:THREE.BackSide})));
+    const beakPivot=new THREE.Group(); headGroup.add(beakPivot);
+    const billSections=[[-.14,0,0,.005],[-.12,.14,.045,.005],[-.045,.205,.085,.018],[.065,.17,.055,-.002],[.19,.075,.023,-.023],[.23,0,0,-.027]];
+    const billVertices=[],billIndices=[],billSegments=32;
+    billSections.forEach(([z,width,height,centerY])=>{for(let i=0;i<=billSegments;i++){const a=i/billSegments*Math.PI*2;billVertices.push(Math.cos(a)*width,centerY+Math.sin(a)*height,z);}});
+    for(let ring=0;ring<billSections.length-1;ring++)for(let i=0;i<billSegments;i++){const a=ring*(billSegments+1)+i,b=a+billSegments+1;billIndices.push(a,a+1,b,a+1,b+1,b);}
+    const beakGeo=new THREE.BufferGeometry(); beakGeo.setAttribute('position',new THREE.Float32BufferAttribute(billVertices,3)); beakGeo.setIndex(billIndices); beakGeo.computeVertexNormals();
+    const beak=new THREE.Mesh(beakGeo,beakMat); beakPivot.add(beak);
+    const eyeGroup=new THREE.Group(); headGroup.add(eyeGroup); const eyes=[];
+    for(const side of [-1,1]){
+      const eye=new THREE.Group(); eye.position.x=side; eyeGroup.add(eye); eyes.push(eye);
+      const sclera=new THREE.Mesh(new THREE.SphereGeometry(.14,24,20),scleraMat); eye.add(sclera);
+      const pupil=new THREE.Mesh(new THREE.SphereGeometry(.065,20,16),pupilMat); eye.add(pupil);
+    }
+    const helmetGroup=new THREE.Group(); headGroup.add(helmetGroup);
+    helmetGroup.add(new THREE.Mesh(new THREE.SphereGeometry(.51,40,24,0,Math.PI*2,0,Math.PI/2),helmetMat));
+    const helmetBrim=new THREE.Mesh(new THREE.TorusGeometry(.51,params.helmetBrimWidth,12,48),helmetMat); helmetBrim.rotation.x=Math.PI/2; helmetBrim.scale.set(1,1,.75); helmetGroup.add(helmetBrim);
+    const strapRig=new THREE.Group(); helmetGroup.add(strapRig);
+    const strapCurve=new THREE.CatmullRomCurve3([new THREE.Vector3(-.425,.16,.22),new THREE.Vector3(-.405,-.1,.255),new THREE.Vector3(-.29,-.34,.29),new THREE.Vector3(0,-.455,.29),new THREE.Vector3(.29,-.34,.29),new THREE.Vector3(.405,-.1,.255),new THREE.Vector3(.425,.16,.22)]);
+    const strapVertices=[],strapIndices=[],strapSegments=40;
+    for(let i=0;i<=strapSegments;i++){
+      const u=i/strapSegments,c=strapCurve.getPoint(u),t=strapCurve.getTangent(u),thick=new THREE.Vector3(-t.y,t.x,0).normalize().multiplyScalar(.012);
+      for(const [edge,depth] of [[-1,-1],[1,-1],[1,1],[-1,1]])strapVertices.push(c.x+thick.x*depth,c.y+thick.y*depth,c.z+edge*.031);
+      if(i<strapSegments)for(let f=0;f<4;f++){const a=i*4+f,b=i*4+(f+1)%4;strapIndices.push(a,b,a+4,b,b+4,a+4);}
+    }
+    strapIndices.push(0,2,1,0,3,2); const end=strapSegments*4; strapIndices.push(end,end+1,end+2,end,end+2,end+3);
+    const strapGeo=new THREE.BufferGeometry(); strapGeo.setAttribute('position',new THREE.Float32BufferAttribute(strapVertices,3)); strapGeo.setIndex(strapIndices); strapGeo.computeVertexNormals(); strapRig.add(new THREE.Mesh(strapGeo,strapMat));
+    const buttons=[]; for(let i=0;i<2;i++){const button=new THREE.Mesh(new THREE.SphereGeometry(.058,20,16),helmetMat); strapRig.add(button); buttons.push(button);}
+
+    function applyParams(){
+      root.scale.setScalar(params.rootScale); root.position.y=params.rootPosY;
+      bodyPivot.position.set(0,params.bodyPosY,0); bodyPivot.rotation.set(params.bodyRotX,params.bodyRotY,params.bodyRotZ); body.scale.set(params.bodyScaleX,params.bodyScaleY,params.bodyScaleZ); bodyOutline.scale.set(params.bodyScaleX*1.025,params.bodyScaleY*1.025,params.bodyScaleZ*1.025);
+      tailPivot.position.set(params.tailPosX,params.tailPosY,0); tailPivot.rotation.set(0,params.tailRotY,params.tailRotZ); tailPivot.scale.setScalar(params.tailScale);
+      feetGroup.position.set(params.feetPosX,params.feetPosY-params.bodyPosY,params.feetPosZ); feetGroup.rotation.set(params.feetRotX,params.feetRotY,params.feetRotZ); feetGroup.scale.set(params.feetScaleX,params.feetScaleY,params.feetScaleZ);
+      wingLPivot.position.set(params.wingPosX,params.wingPosY,params.wingSpreadZ); wingLPivot.rotation.set(0,params.wingBaseRotY,params.wingBaseRotZ); wingLPivot.children[0].scale.set(params.wingScaleXZ,params.wingScaleY,params.wingScaleXZ);
+      wingRPivot.position.set(params.wingPosX,params.wingPosY,-params.wingSpreadZ); wingRPivot.rotation.set(0,-params.wingBaseRotY,-params.wingBaseRotZ); wingRPivot.children[0].scale.set(params.wingScaleXZ,params.wingScaleY,params.wingScaleXZ);
+      headGroup.position.set(params.headPosX,params.headPosY,params.headPosZ); headGroup.rotation.set(params.headRotX,params.headRotY,params.headRotZ); headPivot.scale.setScalar(params.headScale); headPivot.children[1].scale.setScalar(1.018);
+      beakPivot.position.set(0,params.beakPosY,params.beakPosZ); beakPivot.rotation.set(params.beakRotX,params.beakRotY,params.beakRotZ); beak.scale.set(params.beakScaleX,params.beakScaleY,params.beakScaleZ);
+      eyeGroup.position.set(0,params.eyePosY,params.eyePosZ); eyeGroup.scale.setScalar(params.eyeScale);
+      eyes.forEach((eye,i)=>{eye.position.set(i===0?-params.eyeSpread:params.eyeSpread,0,0);eye.rotation.set(0,i===0?params.eyeRotY:-params.eyeRotY,0);eye.children[0].scale.set(params.eyeWidth,params.eyeHeight,.6);eye.children[1].scale.set(.65*params.pupilScale,1.2*params.pupilScale*params.pupilScaleY,.4*params.pupilScale);eye.children[1].position.set(params.pupilShiftX,.01,.08);});
+      helmetGroup.scale.setScalar(params.helmetScale); helmetGroup.position.set(0,params.helmetPosY,params.helmetPosZ); helmetGroup.rotation.set(params.helmetTiltX,params.helmetTiltY,params.helmetTiltZ); helmetBrim.geometry.dispose(); helmetBrim.geometry=new THREE.TorusGeometry(.51,params.helmetBrimWidth,12,48);
+      strapRig.position.set(params.strapPosX,params.strapPosY,params.strapPosZ); strapRig.rotation.set(params.strapRotX,params.strapRotY,params.strapRotZ); strapRig.scale.set(params.strapScaleX,params.strapScaleY,params.strapScaleZ);
+      buttons.forEach((button,i)=>{button.scale.set(params.strapButtonScaleX,params.strapButtonScaleY,params.strapButtonScaleZ);button.position.set((i===0?-1:1)*params.strapButtonPosX,params.strapButtonPosY,params.strapButtonPosZ);button.rotation.set(params.strapButtonRotX,params.strapButtonRotY,params.strapButtonRotZ);});
+    }
+    applyParams();
+
+    const controls=document.querySelector('#controls'),controlMap=new Map();
+    let undoSnapshot=null,dragSnapshot=null;
+    for(const [groupName,keys] of groups){
+      const section=document.createElement('details'); section.open=['Голова','Глаза и зрачки'].includes(groupName);
+      const summary=document.createElement('summary'); summary.textContent=groupName; section.append(summary);
+      for(const key of keys){
+        const rotation=/Rot|Tilt/.test(key),scale=/Scale|Width|Height/.test(key)||key==='eyeSpread'||key==='helmetBrimWidth';
+        const min=rotation?-Math.PI:scale?(key==='helmetBrimWidth'?.005:0):-2.5;
+        const max=rotation?Math.PI:scale?(key==='helmetBrimWidth'?.25:3):2.5;
+        const label=document.createElement('label');label.className='control';
+        const title=document.createElement('span');title.className='control-title';
+        const name=document.createElement('span');name.textContent=labels[key]||key;
+        const output=document.createElement('output');output.value=params[key].toFixed(2);output.textContent=rotation?`${(params[key]*180/Math.PI).toFixed(0)}°`:params[key].toFixed(2);
+        title.append(name,output);
+        const input=document.createElement('input');input.type='range';input.min=min;input.max=max;input.step='.01';input.value=params[key];
+        input.addEventListener('pointerdown',()=>{dragSnapshot={...params};});
+        input.addEventListener('keydown',()=>{dragSnapshot={...params};});
+        input.addEventListener('input',()=>{if(!undoSnapshot&&dragSnapshot)undoSnapshot=dragSnapshot;params[key]=Number(input.value);output.textContent=rotation?`${(params[key]*180/Math.PI).toFixed(0)}°`:params[key].toFixed(2);applyParams();document.querySelector('#undo').disabled=false;});
+        input.addEventListener('change',()=>{if(dragSnapshot)undoSnapshot=dragSnapshot;dragSnapshot=null;document.querySelector('#undo').disabled=!undoSnapshot;});
+        label.append(title,input);section.append(label);controlMap.set(key,{input,output,rotation});
+      }
+      controls.append(section);
+    }
+    document.querySelector('#undo').addEventListener('click',()=>{if(!undoSnapshot)return;Object.assign(params,undoSnapshot);for(const [key,c] of controlMap){c.input.value=params[key];c.output.textContent=c.rotation?`${(params[key]*180/Math.PI).toFixed(0)}°`:params[key].toFixed(2);}undoSnapshot=null;document.querySelector('#undo').disabled=true;applyParams();});
+    document.querySelector('#copy').addEventListener('click',async()=>{const text=JSON.stringify(params,null,2);try{await navigator.clipboard.writeText(text);}catch{const area=document.createElement('textarea');area.value=text;document.body.append(area);area.select();document.execCommand('copy');area.remove();}const status=document.querySelector('#copy-status');status.textContent='JSON скопирован';setTimeout(()=>status.textContent='',1700);});
+
+    const animations={cursorEyes:true,blink:true,dance:false};
+    document.querySelectorAll('[data-animation]').forEach(input=>input.addEventListener('change',()=>animations[input.dataset.animation]=input.checked));
+    const raycaster=new THREE.Raycaster(),mouseNdc=new THREE.Vector2(),lookPlane=new THREE.Plane(new THREE.Vector3(0,0,1),0),lookPoint=new THREE.Vector3();
+    let pointer={x:innerWidth/2,y:innerHeight/2},drag=null,lastTime=performance.now(),time=0,danceBlend=0;
+    renderer.domElement.addEventListener('pointermove',e=>{pointer={x:e.clientX,y:e.clientY};if(drag){orbitYaw-=e.movementX*.006;orbitPitch=THREE.MathUtils.clamp(orbitPitch+e.movementY*.005,-.45,1.05);}});
+    renderer.domElement.addEventListener('pointerdown',e=>{drag={id:e.pointerId};renderer.domElement.setPointerCapture(e.pointerId);});
+    renderer.domElement.addEventListener('pointerup',()=>drag=null);
+    renderer.domElement.addEventListener('pointercancel',()=>drag=null);
+    renderer.domElement.addEventListener('wheel',e=>{cameraRadius=THREE.MathUtils.clamp(cameraRadius+e.deltaY*.004,3.5,10);},{passive:true});
+    function resize(){camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);renderer.setPixelRatio(Math.min(devicePixelRatio,2));}
+    addEventListener('resize',resize);
+
+    function animate(now){
+      requestAnimationFrame(animate);const dt=Math.min(.05,(now-lastTime)/1000);lastTime=now;time+=dt;
+      camera.position.set(cameraTarget.x+Math.sin(orbitYaw)*Math.cos(orbitPitch)*cameraRadius,cameraTarget.y+Math.sin(orbitPitch)*cameraRadius,cameraTarget.z+Math.cos(orbitYaw)*Math.cos(orbitPitch)*cameraRadius);camera.lookAt(cameraTarget);
+      camera.updateMatrixWorld();
+      const rect=renderer.domElement.getBoundingClientRect();mouseNdc.set((pointer.x-rect.left)/rect.width*2-1,-((pointer.y-rect.top)/rect.height)*2+1);raycaster.setFromCamera(mouseNdc,camera);raycaster.ray.intersectPlane(lookPlane,lookPoint);
+      const danceInput=document.querySelector('[data-animation="dance"]').checked;danceBlend=THREE.MathUtils.damp(danceBlend,danceInput?1:0,5,dt);
+      const danceBeat=time*3.2,danceStep=time*6.4;
+      bodyPivot.position.y=params.bodyPosY+Math.abs(Math.sin(danceBeat))*.035*danceBlend;
+      bodyPivot.rotation.set(params.bodyRotX,params.bodyRotY,params.bodyRotZ+Math.sin(danceBeat)*.15*danceBlend);
+      bodyPivot.scale.set(1+Math.sin(danceBeat*2)*.025*danceBlend,1-Math.abs(Math.sin(danceBeat*2))*.035*danceBlend,1+Math.sin(danceBeat*2)*.025*danceBlend);
+      headGroup.position.set(params.headPosX+Math.sin(danceBeat)*.025*danceBlend,params.headPosY,params.headPosZ);
+      headGroup.rotation.set(params.headRotX+Math.sin(danceStep)*.08*danceBlend,params.headRotY,params.headRotZ+Math.sin(danceBeat+.5)*.2*danceBlend);
+      wingLPivot.rotation.set(Math.sin(danceStep)*.22*danceBlend,params.wingBaseRotY,params.wingBaseRotZ+Math.abs(Math.sin(danceStep))*.055*danceBlend);
+      wingRPivot.rotation.set(-Math.sin(danceStep)*.22*danceBlend,-params.wingBaseRotY,-params.wingBaseRotZ-Math.abs(Math.sin(danceStep))*.055*danceBlend);
+      tailPivot.rotation.set(0,params.tailRotY+Math.sin(danceStep)*.28*danceBlend,params.tailRotZ+Math.sin(danceStep+.6)*.1*danceBlend);
+      footPivots.forEach(({pivot},i)=>{const phase=danceStep+i*Math.PI;pivot.position.y=.15+Math.max(0,Math.cos(phase))*.035*danceBlend;pivot.rotation.set(0,0,Math.sin(phase)*.32*danceBlend);});
+      const gx=THREE.MathUtils.clamp((lookPoint.x-root.position.x)/2.8,-1,1)*(animations.cursorEyes?1:0),gy=THREE.MathUtils.clamp((lookPoint.y-.7)/2,-1,1)*(animations.cursorEyes?1:0);
+      const blinkPhase=time%4.1,blink=animations.blink?Math.max(0,1-Math.abs(blinkPhase-.12)/.085,1-Math.abs(blinkPhase-.29)/.075):0;
+      eyes.forEach((eye,i)=>{eye.children[1].position.set(params.pupilShiftX+gx*.045, .01+gy*.035,.08);eye.children[0].scale.y=params.eyeHeight*(1-blink*.88);eye.children[1].scale.y=1.2*params.pupilScale*params.pupilScaleY*(1-blink*.88);});
+      renderer.render(scene,camera);
+    }
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>

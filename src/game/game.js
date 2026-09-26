@@ -70,12 +70,12 @@ const DUCK_PARAMS = {
   bodyRotY: 0,
   bodyRotZ: 0,
   headScale: 1,
-  headPosX: 0.01,
+  headPosX: 0.16,
   headPosY: 1.16,
-  headPosZ: -0.01,
+  headPosZ: -0.03,
   headRotX: 0,
-  headRotY: 0.66,
-  headRotZ: 0.01,
+  headRotY: 55 * Math.PI / 180,
+  headRotZ: 0,
   beakScaleX: 1,
   beakScaleY: 1,
   beakScaleZ: 1,
@@ -123,7 +123,7 @@ const DUCK_PARAMS = {
   wingScaleXZ: 0.8,
   wingSpreadZ: 0.32,
   wingPosY: 0.46,
-  wingPosX: -0.14,
+  wingPosX: 0,
   wingBaseRotZ: 0.338407346410207,
   wingBaseRotY: -0.191592653589793,
   tailScale: 1,
@@ -172,12 +172,92 @@ const DUCK_PARAM_GROUPS = [
   ['tail', 'Хвост', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('tail'))],
   ['feet', 'Лапки', Object.keys(DUCK_PARAMS).filter(key => key.startsWith('feet'))]
 ];
-try {
-  const savedDuckParams = JSON.parse(localStorage.getItem('game-worms-player-model-v11') || '{}');
-  for (const [key, value] of Object.entries(savedDuckParams)) {
-    if (Object.hasOwn(DUCK_PARAMS, key) && Number.isFinite(value)) DUCK_PARAMS[key] = value;
+const DUCK_ANIMATION_GROUPS = [
+  ['Позы и движение', [['idle', 'Спокойно стоит'], ['breathe', 'Дышит'], ['crouch', 'Пригнулся'], ['sneak', 'Крадётся'], ['walk', 'Шагает'], ['run', 'Бежит'], ['jump', 'Прыгает'], ['dodge', 'Уклоняется'], ['balance', 'Держит равновесие']]],
+  ['Взгляд и жесты', [['lookBack', 'Обернулся'], ['lookAround', 'Осматривается'], ['curious', 'Любопытствует'], ['nod', 'Кивает «да»'], ['no', 'Мотает «нет»'], ['wave', 'Машет крылом'], ['salute', 'Отдаёт честь'], ['shrug', 'Пожимает плечами'], ['bow', 'Кланяется'], ['stretch', 'Потягивается']]],
+  ['Эмоции', [['scared', 'Боится'], ['startled', 'Испугался'], ['happy', 'Радуется'], ['laugh', 'Смеётся'], ['sad', 'Грустит'], ['angry', 'Злится'], ['shy', 'Смущается'], ['proud', 'Гордится'], ['sleepy', 'Засыпает'], ['shiver', 'Мёрзнет']]],
+  ['Idle', [['idle_shift', 'Переминается'], ['idle_tap', 'Постукивает лапой'], ['idle_sigh', 'Тяжело вздыхает'], ['idle_yawn', 'Зевает'], ['idle_sway', 'Покачивается'], ['idle_count', 'Считает на крыле'], ['idle_scratch', 'Чешет затылок'], ['idle_preens', 'Чистит перья'], ['idle_wing', 'Осматривает крыло'], ['idle_dust', 'Стряхивает пыль'], ['idle_tail', 'Проверяет хвост'], ['idle_feet', 'Разглядывает лапы'], ['idle_neck', 'Разминает шею'], ['idle_shake', 'Отряхивается'], ['idle_sky', 'Смотрит в небо'], ['idle_listen', 'Прислушивается'], ['idle_bug', 'Следит за мошкой'], ['idle_watch', 'Несёт караул'], ['idle_overShoulder', 'Проверяет за спиной'], ['idle_sniff', 'Принюхивается'], ['idle_hum', 'Напевает и качается'], ['idle_think', 'Задумался'], ['idle_practice', 'Разминает крылья'], ['idle_tip', 'Приветственно кивает'], ['idle_oneLeg', 'Стоит на одной лапе']]],
+  ['Веселье', [['dance', 'Танцует'], ['victory', 'Празднует победу'], ['flap', 'Машет крыльями'], ['wobble', 'Кружится покачиваясь']]]
+];
+const DUCK_ANIMATION_NEUTRAL = { lift: 0, side: 0, turn: 0, lean: 0, roll: 0, crouch: 0, headX: 0, headY: 0, headZ: 0, headDrop: 0, leftWing: 0, rightWing: 0, wingSweep: 0, leftFoot: 0, rightFoot: 0, tail: 0, eye: 0, pupil: 0, gazeX: 0, gazeY: 0, beak: 0 };
+function sampleDuckAnimation(name, seconds) {
+  const pose = { ...DUCK_ANIMATION_NEUTRAL };
+  const slow = Math.sin(seconds * 2), beat = Math.sin(seconds * 6), fast = Math.sin(seconds * 12);
+  const hop = Math.max(0, beat), step = Math.sin(seconds * 8);
+  if (name.startsWith('idle_')) {
+    const phase = seconds % 8;
+    const smooth = value => { const fraction = Math.max(0, Math.min(1, value)); return fraction * fraction * (3 - 2 * fraction); };
+    const envelope = smooth(phase / 1.1) * (1 - smooth((phase - 5.3) / 1.2));
+    const sway = Math.sin(phase * 2.1), flutter = Math.sin(phase * 10);
+    const pulse = Math.max(0, Math.sin(phase * 4));
+    switch (name) {
+      case 'idle_shift': pose.roll = sway * .07; pose.side = sway * .025; pose.leftFoot = Math.max(0, sway) * .23; pose.rightFoot = Math.max(0, -sway) * .23; pose.headZ = -sway * .07; break;
+      case 'idle_tap': pose.rightFoot = pulse * .42; pose.headY = -.2; pose.headX = .16; pose.eye = -.25; pose.gazeY = -.5; break;
+      case 'idle_sigh': { const breath = Math.sin(phase * .85); pose.headDrop = -breath * .045; pose.headX = .15 - breath * .15; pose.leftWing = pose.rightWing = .12 + breath * .12; pose.eye = -.4; break; }
+      case 'idle_yawn': pose.headX = -.38; pose.headDrop = -.03; pose.eye = -.88; pose.beak = -.2; pose.leftWing = 1.1; pose.rightWing = .3; pose.wingSweep = .5; break;
+      case 'idle_sway': pose.roll = sway * .1; pose.headZ = -sway * .08; pose.tail = sway * .16; break;
+      case 'idle_count': pose.leftWing = 1.35; pose.wingSweep = .45; pose.headY = .4; pose.headX = .25 + Math.sin(phase * 5) * .08; pose.gazeY = -.4; pose.rightWing = pulse * .32; break;
+      case 'idle_scratch': pose.rightWing = 2.4 + flutter * .2; pose.wingSweep = -.65; pose.headZ = .22; pose.headY = -.25; pose.eye = -.2; break;
+      case 'idle_preens': pose.leftWing = 1.2; pose.headY = .8; pose.headX = .45 + pulse * .16; pose.headDrop = .06; pose.wingSweep = .55; break;
+      case 'idle_wing': pose.rightWing = 1.35 + sway * .08; pose.headY = -.85; pose.headX = .22; pose.eye = -.15; pose.wingSweep = .25; break;
+      case 'idle_dust': pose.leftWing = .5 + pulse * .55; pose.rightWing = .3 + Math.max(0, -Math.sin(phase * 4)) * .6; pose.headX = .3; pose.headY = sway * .3; pose.tail = flutter * .08; break;
+      case 'idle_tail': pose.headY = -1.2; pose.turn = -.2; pose.headX = .22; pose.tail = sway * .3; pose.rightWing = .4; break;
+      case 'idle_feet': pose.headX = .55; pose.headDrop = .06; pose.gazeY = -.8; pose.leftFoot = .35 + pulse * .15; pose.roll = -.05; break;
+      case 'idle_neck': pose.headX = Math.sin(phase * 1.8) * .22; pose.headZ = Math.cos(phase * 1.8) * .28; pose.headY = sway * .35; pose.eye = -.35; break;
+      case 'idle_shake': pose.headY = flutter * .18; pose.roll = flutter * .04; pose.leftWing = pose.rightWing = .38 + flutter * .15; pose.tail = -flutter * .3; break;
+      case 'idle_sky': pose.headX = -.5; pose.headY = sway * .4; pose.gazeY = .9; pose.eye = .08; break;
+      case 'idle_listen': pose.headY = .65; pose.headZ = -.3; pose.eye = .08; pose.rightWing = .75; pose.turn = .12; break;
+      case 'idle_bug': pose.headY = Math.sin(phase * 2.8) * .5; pose.headX = -.15 + Math.cos(phase * 3.2) * .25; pose.gazeX = Math.sin(phase * 2.8) * .9; pose.gazeY = Math.cos(phase * 3.2) * .8; pose.eye = .12; break;
+      case 'idle_watch': pose.headY = Math.tanh(Math.sin(phase * 1.25) * 3) * .65; pose.headX = -.08; pose.eye = -.2; pose.turn = sway * .1; break;
+      case 'idle_overShoulder': pose.headY = -1.35; pose.headZ = .12; pose.turn = -.18; pose.gazeX = -.6; break;
+      case 'idle_sniff': pose.headX = -.17 + flutter * .035; pose.headY = sway * .2; pose.headDrop = -pulse * .015; pose.beak = pulse * .045; break;
+      case 'idle_hum': pose.headZ = sway * .14; pose.roll = -sway * .05; pose.beak = pulse * .09; pose.rightFoot = pulse * .18; pose.eye = -.25; break;
+      case 'idle_think': pose.headZ = .23; pose.headX = -.12; pose.gazeX = .7; pose.gazeY = .6; pose.leftWing = 1.1; pose.wingSweep = .7; pose.eye = -.25; break;
+      case 'idle_practice': pose.leftWing = .7 + sway * .55; pose.rightWing = .7 - sway * .55; pose.headY = sway * .2; pose.eye = -.1; break;
+      case 'idle_tip': pose.headX = pulse * .23; pose.headY = .25; pose.leftWing = .5; pose.headZ = .08; break;
+      case 'idle_oneLeg': pose.leftFoot = .8; pose.roll = -.08 + sway * .025; pose.headZ = .1; pose.rightWing = .25; pose.eye = -.3; break;
+    }
+    for (const key of Object.keys(pose)) pose[key] *= envelope;
+    pose.headDrop += Math.sin(seconds * 1.8) * .008;
+    return pose;
   }
-} catch {}
+  switch (name) {
+    case 'breathe': pose.headDrop = slow * .015; pose.crouch = slow * .012; pose.leftWing = pose.rightWing = .05 + slow * .04; break;
+    case 'crouch': pose.crouch = .25; pose.headDrop = .08; pose.headX = .18; pose.leftWing = pose.rightWing = .2; pose.eye = -.18; break;
+    case 'sneak': pose.crouch = .19; pose.headX = .2; pose.roll = step * .055; pose.leftFoot = step * .32; pose.rightFoot = -step * .32; pose.headY = slow * .28; pose.eye = -.28; break;
+    case 'walk': pose.lift = Math.abs(step) * .035; pose.roll = step * .065; pose.leftFoot = step * .55; pose.rightFoot = -step * .55; pose.wingSweep = step * .35; pose.headX = beat * .04; break;
+    case 'run': pose.lift = Math.abs(fast) * .09; pose.lean = .16; pose.leftFoot = fast * .85; pose.rightFoot = -fast * .85; pose.wingSweep = fast * .65; pose.headX = -.12; break;
+    case 'jump': pose.lift = hop * .48; pose.crouch = Math.max(0, -beat) * .08; pose.leftWing = pose.rightWing = hop * .95; pose.leftFoot = pose.rightFoot = hop * .4; break;
+    case 'dodge': pose.side = slow * .3; pose.roll = -slow * .3; pose.crouch = Math.abs(slow) * .14; pose.headZ = slow * .2; break;
+    case 'balance': pose.roll = slow * .22; pose.headZ = -slow * .3; pose.leftWing = 1 + beat * .16; pose.rightWing = 1 - beat * .16; pose.leftFoot = slow * .25; pose.rightFoot = -slow * .25; break;
+    case 'lookBack': pose.headY = -1.45; pose.turn = -.25; pose.headZ = -.1; pose.gazeX = -.7; break;
+    case 'lookAround': pose.headY = slow * .95; pose.headX = Math.cos(seconds * 1.3) * .12; pose.gazeX = slow * .7; break;
+    case 'curious': pose.headZ = .3 + slow * .08; pose.headY = .25; pose.headX = -.12; pose.eye = .12; pose.gazeY = .3; break;
+    case 'nod': pose.headX = beat * .32; pose.headDrop = Math.max(0, beat) * .03; break;
+    case 'no': pose.headY = beat * .6; pose.eye = -.12; break;
+    case 'wave': pose.leftWing = 1.9 + beat * .35; pose.headZ = -.15; pose.wingSweep = .2; break;
+    case 'salute': pose.leftWing = 2.55; pose.wingSweep = -.45; pose.headX = -.09; pose.headY = -.15; break;
+    case 'shrug': pose.leftWing = pose.rightWing = .95 + slow * .12; pose.headDrop = -.03; pose.headZ = .16; pose.eye = -.15; break;
+    case 'bow': { const bow = (1 - Math.cos(seconds * 2)) * .5; pose.lean = bow * .3; pose.headX = bow * .6; pose.headDrop = bow * .12; pose.leftWing = pose.rightWing = bow * .35; break; }
+    case 'stretch': pose.leftWing = pose.rightWing = 2.5 + slow * .1; pose.headDrop = -.07; pose.headX = -.22; pose.eye = -.6; break;
+    case 'scared': pose.crouch = .12; pose.headDrop = .025; pose.side = fast * .012; pose.headY = fast * .045; pose.eye = .25; pose.pupil = -.35; pose.leftWing = pose.rightWing = .4 + fast * .09; break;
+    case 'startled': { const shock = Math.pow(Math.max(0, Math.sin(seconds * 2)), 8); pose.lift = shock * .3; pose.headX = -shock * .25; pose.leftWing = pose.rightWing = shock * 1.6; pose.eye = shock * .4; pose.pupil = -shock * .45; break; }
+    case 'happy': pose.lift = hop * .17; pose.leftWing = pose.rightWing = .7 + beat * .35; pose.headZ = slow * .15; pose.eye = -.35; pose.tail = beat * .3; break;
+    case 'laugh': pose.headX = -.2 + fast * .08; pose.crouch = (fast + 1) * .025; pose.headDrop = fast * .025; pose.eye = -.72; pose.leftWing = pose.rightWing = .35; pose.beak = fast * .08; break;
+    case 'sad': pose.headX = .35; pose.headDrop = .065; pose.headZ = .08; pose.eye = -.4; pose.gazeY = -.8; pose.leftWing = pose.rightWing = -.12; break;
+    case 'angry': pose.headX = .2; pose.headY = beat * .06; pose.eye = -.55; pose.pupil = -.1; pose.leftWing = pose.rightWing = .45; pose.leftFoot = Math.max(0, beat) * .45; pose.crouch = hop * .025; break;
+    case 'shy': pose.headX = .23; pose.headZ = .25; pose.headY = -.4; pose.gazeX = -.7; pose.gazeY = -.5; pose.roll = slow * .055; pose.leftWing = pose.rightWing = .15; break;
+    case 'proud': pose.headX = -.25; pose.headDrop = -.04; pose.leftWing = pose.rightWing = .65; pose.eye = -.15; pose.turn = slow * .12; break;
+    case 'sleepy': pose.eye = -.92; pose.headX = .28 + (slow + 1) * .1; pose.headZ = slow * .12; pose.headDrop = .04; pose.crouch = .035; break;
+    case 'shiver': pose.roll = Math.sin(seconds * 28) * .022; pose.headY = Math.sin(seconds * 25) * .045; pose.leftWing = pose.rightWing = .18 + fast * .06; pose.eye = -.22; pose.crouch = .07; break;
+    case 'dance': pose.roll = slow * .17; pose.lift = hop * .05; pose.headZ = -slow * .22; pose.headX = beat * .1; pose.wingSweep = beat * .6; pose.leftWing = .5 + beat * .3; pose.rightWing = .5 - beat * .3; pose.leftFoot = step * .35; pose.rightFoot = -step * .35; pose.tail = beat * .3; break;
+    case 'victory': pose.leftWing = pose.rightWing = 2.2 + beat * .2; pose.lift = hop * .25; pose.headX = -.15; pose.eye = -.3; pose.turn = slow * .25; break;
+    case 'flap': pose.leftWing = pose.rightWing = .9 + fast * .8; pose.headDrop = beat * .015; pose.tail = beat * .2; break;
+    case 'wobble': pose.turn = Math.sin(seconds) * 1.5; pose.roll = slow * .18; pose.headY = -slow * .3; pose.leftWing = pose.rightWing = .7; pose.leftFoot = step * .4; pose.rightFoot = -step * .4; break;
+  }
+  return pose;
+}
+const defaultPlayerYaw = facing => facing > 0 ? Math.PI / 2 : -Math.PI / 2;
 const WORM_NAMES = [
   'Крякен', 'Селезень', 'Сержант Кряк', 'Бомбардир', 'Дональд',
   'Крякадзе', 'Перочин', 'Майор Пух', 'Даффи', 'Штурмовик',
@@ -347,7 +427,12 @@ export class Game {
     dirLight.position.set(20, 40, 50);
     this.scene.add(dirLight);
 
-    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.damagePopups = []; this.cameraFocus = null; this.cameraPan = { x: 0, y: 0 }; this.mouseCameraOverrideUntil = 0; this.weaponCameraBlend = 0; this.weaponCameraStart = null; this.touchPointers = new Map(); this.touchGesture = null; this.mobileControls = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
+    this.loop = new GameLoop(this.update.bind(this), this.render.bind(this)); this.keys = new Set(); this.vector = new THREE.Vector3(); this.motion = { x: 0, y: 0 }; this.angle = Math.PI / 4; this.wind = 0; this.zoom = 1; this.time = 0; this.hudTime = 0; this.damageDisplayTime = 0; this.damagePopups = []; this.cameraFocus = null; this.cameraPan = { x: 0, y: 0 }; this.mouseCameraOverrideUntil = 0; this.mouseCameraHasBeenUsed = false; this.mouseCameraNeedsReanchor = false; this.mouseCameraOffset = { x: 0, y: 0 }; this.mouseCameraOffsetProgress = { x: 0, y: 0 }; this.mouseCameraAnchor = null; this.weaponCameraBlend = 0; this.weaponCameraStart = null; this.touchPointers = new Map(); this.touchGesture = null; this.mobileControls = null; this.turnIntroTime = 0; this.footstepTimer = 0; this.lowGravity = false; this.earthquakeShake = 0; this.earthquakeShakeX = 0; this.earthquakeShakeY = 0; this.lightingMode = 'soft';
+    this.playerAnimations = { blink: true };
+    this.duckAnimation = { name: 'idle', time: 0, speed: 1, strength: 1, paused: false, demo: false, demoTime: 0 };
+    this.playerTurnSpeed = 1.8;
+    this.playerTurnBodyBlendDegrees = 0.7;
+    this.turnLookActive = null;
     this.resize = this.resize.bind(this); window.addEventListener('resize', this.resize); window.visualViewport?.addEventListener('resize', this.resize); this.resize();
     this.inMenu = true; this.pointerScreenPosition = null; this.installMobileControls(); this.installUI(); this.bindInput();
   }
@@ -423,10 +508,10 @@ export class Game {
 
     // 2. Хвост
     const tailPivot = new THREE.Group();
-    tailPivot.position.set(p.tailPosX, p.tailPosY, 0);
+    tailPivot.position.set(p.tailPosX, p.tailPosY - p.bodyPosY, 0);
     tailPivot.rotation.set(0, p.tailRotY, p.tailRotZ);
     tailPivot.scale.setScalar(p.tailScale);
-    root.add(tailPivot);
+    bodyPivot.add(tailPivot);
 
     const tailMesh = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), bodyMat);
     tailMesh.scale.set(.9, 1.25, .85);
@@ -459,18 +544,18 @@ export class Game {
     wingGeo.translate(0, -0.08, 0);
 
     const wingLPivot = new THREE.Group();
-    wingLPivot.position.set(p.wingPosX, p.wingPosY, p.wingSpreadZ);
+    wingLPivot.position.set(p.wingPosX, p.wingPosY - p.bodyPosY, p.wingSpreadZ);
     wingLPivot.rotation.set(0, p.wingBaseRotY, p.wingBaseRotZ);
-    root.add(wingLPivot);
+    bodyPivot.add(wingLPivot);
 
     const wingLMesh = new THREE.Mesh(wingGeo, nearWingMat);
     wingLMesh.scale.set(p.wingScaleXZ, p.wingScaleY, p.wingScaleXZ);
     wingLPivot.add(wingLMesh);
 
     const wingRPivot = new THREE.Group();
-    wingRPivot.position.set(p.wingPosX, p.wingPosY, -p.wingSpreadZ);
+    wingRPivot.position.set(p.wingPosX, p.wingPosY - p.bodyPosY, -p.wingSpreadZ);
     wingRPivot.rotation.set(0, -p.wingBaseRotY, -p.wingBaseRotZ);
-    root.add(wingRPivot);
+    bodyPivot.add(wingRPivot);
 
     const wingRMesh = new THREE.Mesh(wingGeo, farWingMat);
     wingRMesh.scale.set(p.wingScaleXZ, p.wingScaleY, p.wingScaleXZ);
@@ -480,6 +565,7 @@ export class Game {
     const headGroup = new THREE.Group();
     headGroup.position.set(p.headPosX, p.headPosY, p.headPosZ);
     headGroup.rotation.set(p.headRotX, p.headRotY, p.headRotZ);
+    headGroup.rotation.order = 'YXZ';
     root.add(headGroup);
 
     const headPivot = new THREE.Group();
@@ -668,6 +754,10 @@ export class Game {
         });
       }
     };
+    // Настройки модели и анимации вращают каждую часть вокруг её собственных осей.
+    duck.root.traverse(object => {
+      object.rotation.order = 'YXZ';
+    });
     this.applyDuckModelParams(duck);
     return duck;
   }
@@ -679,12 +769,12 @@ export class Game {
     duck.bodyPivot.position.set(0, p.bodyPosY, 0);
     duck.bodyPivot.rotation.set(p.bodyRotX, p.bodyRotY, p.bodyRotZ);
     duck.bodyMesh.scale.set(p.bodyScaleX, p.bodyScaleY, p.bodyScaleZ);
-    duck.tailPivot.position.set(p.tailPosX, p.tailPosY, 0);
+    duck.tailPivot.position.set(p.tailPosX, p.tailPosY - p.bodyPosY, 0);
     duck.tailPivot.rotation.set(0, p.tailRotY, p.tailRotZ);
     duck.tailPivot.scale.setScalar(p.tailScale);
-    duck.wingLPivot.position.set(p.wingPosX, p.wingPosY, p.wingSpreadZ);
+    duck.wingLPivot.position.set(p.wingPosX, p.wingPosY - p.bodyPosY, p.wingSpreadZ);
     duck.wingLPivot.rotation.set(0, p.wingBaseRotY, p.wingBaseRotZ);
-    duck.wingRPivot.position.set(p.wingPosX, p.wingPosY, -p.wingSpreadZ);
+    duck.wingRPivot.position.set(p.wingPosX, p.wingPosY - p.bodyPosY, -p.wingSpreadZ);
     duck.wingRPivot.rotation.set(0, -p.wingBaseRotY, -p.wingBaseRotZ);
     duck.wingLMesh.scale.set(p.wingScaleXZ, p.wingScaleY, p.wingScaleXZ);
     duck.wingRMesh.scale.set(p.wingScaleXZ, p.wingScaleY, p.wingScaleXZ);
@@ -1447,7 +1537,7 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHudCollapsed = true; this.matchHud.hidden = true; this.matchHudToggle.hidden = false; this.matchHudToggle.textContent = 'Панель'; this.matchHudToggle.setAttribute('aria-expanded', 'false'); this.backgroundHudToggle.hidden = false; this.backgroundHud.hidden = this.backgroundHudCollapsed; this.playerHudToggle.hidden = false; this.playerHud.hidden = this.playerHudCollapsed; this.playerHudToggle.setAttribute('aria-expanded', String(!this.playerHudCollapsed)); this.teamHealthHud.hidden = false; this.windHud.hidden = false; this.labels.hidden = false; if (this.mobileControls) this.mobileControls.hidden = false; this.loop.start(); } }
+  start() { if (this.world) { this.inMenu = false; this.matchHudCollapsed = true; this.matchHud.hidden = true; this.matchHudToggle.hidden = false; this.matchHudToggle.textContent = 'Панель'; this.matchHudToggle.setAttribute('aria-expanded', 'false'); this.backgroundHudToggle.hidden = false; this.backgroundHud.hidden = this.backgroundHudCollapsed; this.playerHudToggle.hidden = false; this.playerHud.hidden = this.playerHudCollapsed; this.playerHudToggle.setAttribute('aria-expanded', String(!this.playerHudCollapsed)); this.animationHudToggle.hidden = false; this.animationHud.hidden = this.animationHudCollapsed; this.animationHudToggle.setAttribute('aria-expanded', String(!this.animationHudCollapsed)); this.teamHealthHud.hidden = false; this.windHud.hidden = false; this.headRotationHud.hidden = false; this.labels.hidden = false; if (this.mobileControls) this.mobileControls.hidden = false; this.loop.start(); } }
   pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.mobileControls) this.mobileControls.hidden = true; if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
@@ -1470,7 +1560,23 @@ export class Game {
     this.particles.update(this.time);
     for (const worm of this.worms) worm.recoveryTime = Math.max(0, worm.recoveryTime - dt);
     if (this.winner) this.victoryTime += dt;
-    else { this.turn.update(dt); this.bot.update(dt); }
+    else {
+      this.turn.update(dt);
+      this.bot.update(dt);
+      if (this.active && this.active !== this.turnLookActive) {
+        this.turnLookActive = this.active;
+        for (const worm of this.worms) {
+          worm.bodyPreviewYaw = defaultPlayerYaw(worm.facing);
+          worm.bodyPreviewTurn = null;
+        }
+        const previewInput = this.playerHud?.querySelector('[data-preview-yaw]');
+        if (previewInput) {
+          const degrees = Math.round(THREE.MathUtils.radToDeg(this.active.bodyPreviewYaw));
+          previewInput.value = String(degrees);
+          previewInput.parentElement.querySelector('output').textContent = `${degrees}°`;
+        }
+      }
+    }
 
     if (this.humanInput() && this.turnIntroTime <= 0 && this.active.recoveryTime <= 0 && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.flame) && (!this.weapons.movementMode || (this.weapons.movementMode.mode === 'bungee' && !this.weapons.movementMode.airborne) || (this.weapons.movementMode.mode === 'parachute' && this.active.grounded))) {
 
@@ -1489,7 +1595,13 @@ export class Game {
         this.activeMoved = true;
       }
       if (direction) {
-        w.facing = direction;
+        if (w.facing !== direction) {
+          const fromYaw = w.bodyPreviewYaw ?? defaultPlayerYaw(w.facing);
+          w.bodyPreviewYaw = fromYaw;
+          w.bodyPreviewTurn = { from: fromYaw, to: defaultPlayerYaw(direction), start: this.time, duration: .32 / this.playerTurnSpeed };
+          w.facing = direction;
+        }
+        w.turnBackFacing = false;
         if (Math.cos(this.angle) * direction < 0) this.angle = Math.PI - this.angle;
         this.angle = clampAimForWeapon(this.angle, w.facing, this.turn.weapon);
       }
@@ -1897,6 +2009,7 @@ export class Game {
     this.earthquakeShakeX = 0;
     this.earthquakeShakeY = 0;
     const projectile = this.weapons.projectile;
+    const projectileInFlight = Boolean(projectile && !projectile.hit && (projectile.restingTime ?? 0) <= .08);
     const trackingProjectile = Boolean(projectile);
     const manualCameraOverride = this.time < this.mouseCameraOverrideUntil;
     const smoothing = 1 - Math.exp(-5 * dt);
@@ -1938,11 +2051,46 @@ export class Game {
         const rect = this.canvas.getBoundingClientRect();
         const horizontal = THREE.MathUtils.clamp((this.mousePanPosition.x - rect.left) / rect.width, 0, 1);
         const vertical = THREE.MathUtils.clamp((this.mousePanPosition.y - rect.top) / rect.height, 0, 1);
-        return { x: mouseMinX + horizontal * (mouseMaxX - mouseMinX), y: maxY - (maxY - minY) * vertical };
+        const mapped = { x: mouseMinX + horizontal * (mouseMaxX - mouseMinX), y: maxY - (maxY - minY) * vertical };
+        if (this.mouseCameraNeedsReanchor) {
+          this.mouseCameraOffset.x = this.camera.position.x - mapped.x;
+          this.mouseCameraOffset.y = this.camera.position.y - mapped.y;
+          this.mouseCameraOffsetProgress.x = 0;
+          this.mouseCameraOffsetProgress.y = 0;
+          this.mouseCameraAnchor = { x: this.mousePanPosition.x, y: this.mousePanPosition.y };
+          this.mouseCameraNeedsReanchor = false;
+        }
+        const offsetFade = (position, anchor, start, length, previousProgress) => {
+          if (anchor === null) return { fade: 1, progress: previousProgress };
+          const span = position < anchor ? anchor - start : start + length - anchor;
+          const progress = span < 1
+            ? (Math.abs(position - anchor) < 1 ? 0 : 1)
+            : THREE.MathUtils.clamp(Math.abs(position - anchor) / span, 0, 1);
+          const maxProgress = Math.max(previousProgress, progress);
+          return { fade: 1 - maxProgress, progress: maxProgress };
+        };
+        const fadeX = offsetFade(this.mousePanPosition.x, this.mouseCameraAnchor?.x ?? null, rect.left, rect.width, this.mouseCameraOffsetProgress.x);
+        const fadeY = offsetFade(this.mousePanPosition.y, this.mouseCameraAnchor?.y ?? null, rect.top, rect.height, this.mouseCameraOffsetProgress.y);
+        this.mouseCameraOffsetProgress.x = fadeX.progress;
+        this.mouseCameraOffsetProgress.y = fadeY.progress;
+        const offsetX = this.mouseCameraOffset.x * fadeX.fade;
+        const offsetY = this.mouseCameraOffset.y * fadeY.fade;
+        return {
+          x: THREE.MathUtils.clamp(mapped.x + offsetX, mouseMinX, mouseMaxX),
+          y: THREE.MathUtils.clamp(mapped.y + offsetY, minY, maxY)
+        };
       })()
       : null;
     const useMouseCamera = !!mouseCameraPosition && manualCameraOverride;
     const target = useMouseCamera ? mouseCameraPosition : automaticTarget || this.active;
+    if (useMouseCamera && this.mousePanPosition) {
+      const rect = this.canvas.getBoundingClientRect();
+      const atScreenEdge = this.mousePanPosition.x <= rect.left + 1 || this.mousePanPosition.x >= rect.right - 1 ||
+        this.mousePanPosition.y <= rect.top + 1 || this.mousePanPosition.y >= rect.bottom - 1;
+      if (atScreenEdge && Math.hypot(target.x - this.camera.position.x, target.y - this.camera.position.y) > .15) {
+        this.mouseCameraOverrideUntil = Math.max(this.mouseCameraOverrideUntil, this.time + .12);
+      }
+    }
     const cameraPan = useMouseCamera || (automaticTarget && !manualCameraOverride) ? { x: 0, y: 0 } : this.cameraPan;
     if (target) {
       const x = useMouseCamera
@@ -1989,6 +2137,20 @@ export class Game {
     }
 
     // Процедурные анимации для каждой утки
+    const animationPlayback = this.duckAnimation;
+    if (!animationPlayback.paused) {
+      animationPlayback.time += dt * animationPlayback.speed;
+      if (animationPlayback.demo) {
+        animationPlayback.demoTime += dt;
+        if (animationPlayback.demoTime >= 4) {
+          const clips = DUCK_ANIMATION_GROUPS.flatMap(([, entries]) => entries.map(([name]) => name));
+          const nextClip = clips[(clips.indexOf(animationPlayback.name) + 1) % clips.length];
+          this.animationHud.querySelector(`[data-duck-animation="${nextClip}"]`)?.click();
+        }
+      }
+    }
+    const targetAnimationPose = sampleDuckAnimation(animationPlayback.name, animationPlayback.time);
+
     // Процедурные анимации и оружие для каждой утки
     for (const w of this.worms) if (w.alive) {
       const isWinningWorm = this.winner && this.winningTeam === w.team;
@@ -2007,15 +2169,64 @@ export class Game {
       const posY = w.previousY + (w.y - w.previousY) * alpha;
       w.mesh.position.set(posX, posY, 0);
 
-      // Разворот в сторону взгляда
-      w.duck.root.scale.x = Math.abs(w.duck.root.scale.x) * (isWinningWorm ? 1 : w.facing);
+      let previewYaw = w.bodyPreviewYaw ?? defaultPlayerYaw(w.facing);
+      const previewTurn = w.bodyPreviewTurn;
+      if (previewTurn) {
+        const progress = THREE.MathUtils.clamp((this.time - previewTurn.start) / previewTurn.duration, 0, 1);
+        const eased = progress * progress * (3 - 2 * progress);
+        previewYaw = previewTurn.from + (previewTurn.to - previewTurn.from) * eased;
+        w.bodyPreviewYaw = previewYaw;
+        if (progress >= 1) {
+          previewYaw = previewTurn.to;
+          w.bodyPreviewYaw = previewYaw;
+          w.bodyPreviewTurn = null;
+        }
+      }
+      const rootScale = Math.abs(DUCK_PARAMS.rootScale);
+      let visualFacing = w.facing;
+      const turnCrossedZero = previewTurn && (previewTurn.to < previewTurn.from
+        ? previewYaw <= 0
+        : previewYaw >= 0);
+      if (previewTurn) {
+        visualFacing = previewTurn.to < previewTurn.from
+          ? (turnCrossedZero ? -1 : 1)
+          : (turnCrossedZero ? 1 : -1);
+      } else if (previewYaw !== 0) {
+        visualFacing = previewYaw < 0 ? -1 : 1;
+      }
+      if (isWinningWorm) visualFacing = 1;
+      const visualFacingSign = visualFacing < 0 ? -1 : 1;
+      w.facingVisual = visualFacing;
+      w.duck.root.scale.set(rootScale * visualFacing, rootScale, rootScale);
+      if (previewTurn && w === this.active) {
+        const previewInput = this.playerHud?.querySelector('[data-preview-yaw]');
+        if (previewInput) {
+          const degrees = Math.round(THREE.MathUtils.radToDeg(previewYaw));
+          previewInput.value = String(degrees);
+          previewInput.parentElement.querySelector('output').textContent = `${degrees}°`;
+        }
+      }
 
       const d = w.duck;
       const p = DUCK_PARAMS;
+      w.duckAnimationPose ||= { ...DUCK_ANIMATION_NEUTRAL };
+      for (const key of Object.keys(DUCK_ANIMATION_NEUTRAL)) {
+        w.duckAnimationPose[key] = THREE.MathUtils.damp(w.duckAnimationPose[key], targetAnimationPose[key] * animationPlayback.strength, 12, dt);
+      }
       d.bodyPivot.scale.set(1, 1, 1);
+      d.root.position.set(0, p.rootPosY, 0);
+      d.root.rotation.set(0, 0, 0);
       d.bodyPivot.position.y = p.bodyPosY;
+      d.bodyPivot.rotation.set(p.bodyRotX, p.bodyRotY, p.bodyRotZ);
+      d.feetGroup.position.set(p.feetPosX, p.feetPosY - p.bodyPosY, p.feetPosZ);
+      d.wingLPivot.rotation.set(0, p.wingBaseRotY, p.wingBaseRotZ);
+      d.wingRPivot.rotation.set(0, -p.wingBaseRotY, -p.wingBaseRotZ);
+      d.tailPivot.rotation.set(0, p.tailRotY, p.tailRotZ);
+      d.headGroup.position.x = p.headPosX;
       d.headGroup.position.y = p.headPosY;
+      d.headGroup.position.z = p.headPosZ;
       d.headGroup.rotation.set(p.headRotX, p.headRotY, p.headRotZ);
+      d.beakPivot.rotation.set(p.beakRotX, p.beakRotY, p.beakRotZ);
       const isJetPackFlying = w === this.active && this.weapons.movementMode?.mode === 'jetPack';
       const isWalking = !isJetPackFlying && w.grounded && Math.abs(w.vx) > 0.3;
       const isAirborne = !w.grounded;
@@ -2033,6 +2244,7 @@ export class Game {
         (this.turn.state === TURN.WAITING_INPUT || this.turn.state === TURN.CHARGING_SHOT || Boolean(batSwing) || isRopeInAir);
 
       if (isShootingActive) {
+        const thought = this.weaponArt.thought(this.turn.weapon) && !(this.weapons.movementMode?.mode === 'bungee' && this.weapons.movementMode.owner === w);
         if (d.currentWeapon !== this.turn.weapon) {
           disposeWeaponMesh(d.weaponMesh);
           d.weaponMesh = this.createWeaponMesh(this.turn.weapon);
@@ -2043,10 +2255,24 @@ export class Game {
         d.weaponMesh.visible = !isJetPackFlying;
 
         // Поворот оружия по направлению прицеливания с учётом стороны взгляда
-        const aimAngle = (w.facing > 0) ? this.angle : (Math.PI - this.angle);
-        const thought = this.weaponArt.thought(this.turn.weapon) && !(this.weapons.movementMode?.mode === 'bungee' && this.weapons.movementMode.owner === w);
-        d.weaponMesh.position.set(thought ? w.facing * .95 : w.facing * .28, thought ? 1.9 : -.05, 2);
-        d.weaponMesh.scale.x = thought ? 1 : w.facing;
+        if (d.weaponMesh.userData.thoughtDisplay !== thought) {
+          d.weaponMesh.userData.thoughtDisplay = thought;
+          d.weaponMesh.traverse(node => {
+            if (!node.isMesh) return;
+            node.material.depthTest = false;
+            node.material.needsUpdate = true;
+            node.renderOrder = 20;
+          });
+        }
+        const holdingWing = visualFacingSign > 0 ? d.wingLPivot : d.wingRPivot;
+        const weaponParent = thought ? w.mesh : holdingWing;
+        if (d.weaponMesh.parent !== weaponParent) weaponParent.add(d.weaponMesh);
+        d.weaponMesh.position.set(
+          thought ? w.facing * .95 : 0,
+          thought ? 1.9 : 0,
+          thought ? 2 : .04
+        );
+        d.weaponMesh.scale.setScalar(thought ? 1 : .82);
         let swingOffset = 0;
         if (batSwing) {
           const t = batSwing.elapsed;
@@ -2054,9 +2280,14 @@ export class Game {
           if (t < .2) swingOffset = -.85 * ease(t / .2);
           else if (t < .29) swingOffset = -.85 + 1.55 * ease((t - .2) / .09);
           else swingOffset = .7 * (1 - ease((t - .29) / .23));
-          swingOffset *= w.facing;
+          swingOffset *= visualFacingSign;
         }
-        d.weaponMesh.rotation.z = thought ? -w.mesh.rotation.z : aimAngle * w.facing + swingOffset;
+        const rootTurnZ = d.root.rotation.z;
+        const wingTurnZ = holdingWing.rotation.z;
+        const localAim = visualFacingSign > 0
+          ? this.angle - w.mesh.rotation.z - rootTurnZ - wingTurnZ - this.weaponArt.aimArtAngle(this.turn.weapon)
+          : Math.PI - this.angle + w.mesh.rotation.z - rootTurnZ - wingTurnZ - this.weaponArt.aimArtAngle(this.turn.weapon);
+        d.weaponMesh.rotation.z = thought ? -w.mesh.rotation.z : localAim + swingOffset;
       } else {
         if (d.weaponPivot) d.weaponPivot.visible = false;
         if (d.weaponMesh) d.weaponMesh.visible = false;
@@ -2162,6 +2393,56 @@ export class Game {
         d.wingRPivot.rotation.set(0, -p.wingBaseRotY, -p.wingBaseRotZ - breath * 0.6);
         d.tailPivot.rotation.set(0, p.tailRotY, p.tailRotZ);
       }
+
+      const animationTime = w.animTime;
+      const animations = this.playerAnimations;
+      const pose = w.duckAnimationPose;
+      const blinkCycle = animationTime % 4.1;
+      const blink = animations.blink
+        ? Math.max(0, 1 - Math.abs(blinkCycle - .12) / .085, 1 - Math.abs(blinkCycle - .29) / .075)
+        : 0;
+      const eyeOpening = THREE.MathUtils.clamp(1 + pose.eye, .07, 1.5) * (1 - blink * .88);
+      const pupilSize = THREE.MathUtils.clamp(1 + pose.pupil, .4, 1.5);
+      d.eyes.forEach(eye => {
+        eye.children[0].scale.y = p.eyeHeight * eyeOpening;
+        eye.children[1].scale.set(.65 * p.pupilScale * pupilSize, 1.2 * p.pupilScale * p.pupilScaleY * eyeOpening * pupilSize, .4 * p.pupilScale * pupilSize);
+        eye.children[1].position.set(p.pupilShiftX + THREE.MathUtils.clamp(pose.gazeX, -1, 1) * .045 * w.facing, .01 + THREE.MathUtils.clamp(pose.gazeY, -1, 1) * .05, .08);
+      });
+
+      d.root.position.x += pose.side;
+      d.root.position.y += pose.lift;
+      const turnBlendWidth = THREE.MathUtils.degToRad(this.playerTurnBodyBlendDegrees);
+      const turnBaseYaw = previewTurn
+        ? THREE.MathUtils.lerp(
+          -Math.PI / 2,
+          Math.PI / 2,
+          THREE.MathUtils.smoothstep(previewYaw, -turnBlendWidth, turnBlendWidth)
+        )
+        : defaultPlayerYaw(visualFacing);
+      const turnRootYaw = previewYaw - turnBaseYaw;
+      d.root.rotation.set(pose.lean, pose.turn + turnRootYaw, pose.roll);
+      d.bodyPivot.position.y -= pose.crouch;
+      d.feetGroup.position.y += pose.crouch;
+      d.headGroup.position.x += pose.side * .25;
+      d.headGroup.position.y -= pose.crouch + pose.headDrop;
+      d.headGroup.rotation.x += pose.headX;
+      const turnHeadPeak = Math.max(p.headRotY, Math.PI / 2);
+      const turnHeadBlend = previewTurn
+        ? 1 - THREE.MathUtils.smoothstep(Math.abs(previewYaw), 0, Math.PI / 2)
+        : 0;
+      d.headGroup.rotation.y = THREE.MathUtils.lerp(p.headRotY, turnHeadPeak, turnHeadBlend) + pose.headY;
+      d.headGroup.rotation.z += pose.headZ;
+      d.wingLPivot.rotation.x -= pose.leftWing;
+      d.wingRPivot.rotation.x += pose.rightWing;
+      d.wingLPivot.rotation.y += pose.wingSweep;
+      d.wingRPivot.rotation.y += pose.wingSweep;
+      d.tailPivot.rotation.y += pose.tail;
+      d.beakPivot.rotation.x += pose.beak;
+      d.footPivots.forEach(({ pivot }, index) => {
+        const stride = index === 0 ? pose.leftFoot : pose.rightFoot;
+        pivot.position.y += Math.max(0, stride) * .11;
+        pivot.rotation.z += stride;
+      });
     }
 
     const shooter = this.active;
@@ -2171,9 +2452,32 @@ export class Game {
       this.weapons.movementMode?.mode !== 'jetPack' && weaponVisual?.visible;
     if (weaponIsVisible) {
       const thought = this.weaponArt.thought(this.turn.weapon) && this.weapons.movementMode?.mode !== 'bungee';
-      const aimedRotation = (shooter.facing > 0 ? this.angle : Math.PI - this.angle) * shooter.facing;
-      const artAngle = thought ? 0 : this.weaponArt.aimArtAngle(this.turn.weapon) * shooter.facing;
-      weaponVisual.rotation.z = (thought ? 0 : aimedRotation - artAngle) - shooter.mesh.rotation.z;
+      weaponVisual.scale.setScalar(thought ? 1 : .82);
+      if (thought) {
+        weaponVisual.rotation.z = 0;
+      } else {
+        const facing = shooter.facingVisual < 0 ? -1 : 1;
+        const spriteFacing = shooter.facing < 0 ? -1 : 1;
+        const holdingWing = weaponVisual.parent === shooter.duck.wingRPivot ? shooter.duck.wingRPivot : shooter.duck.wingLPivot;
+        const rootTurnZ = shooter.duck.root.rotation.z;
+        const wingTurnZ = holdingWing.rotation.z;
+        const artAngle = this.weaponArt.aimArtAngle(this.turn.weapon);
+        weaponVisual.rotation.z = facing > 0
+          ? this.angle - shooter.mesh.rotation.z - rootTurnZ - wingTurnZ - artAngle
+          : Math.PI - this.angle + shooter.mesh.rotation.z - rootTurnZ - wingTurnZ - artAngle;
+        const billboardAngle = spriteFacing > 0
+          ? this.angle - artAngle
+          : this.angle - Math.PI + artAngle;
+        for (const sprite of weaponVisual.userData.billboardSprites || []) {
+          sprite.material.rotation = billboardAngle;
+          if (sprite.userData.facing !== spriteFacing) {
+            sprite.material.map = sprite.userData.textureKind === 'depth'
+              ? this.weaponArt.depthTexture(sprite.userData.weaponType, spriteFacing < 0)
+              : this.weaponArt.texture(sprite.userData.weaponType, spriteFacing < 0);
+            sprite.userData.facing = spriteFacing;
+          }
+        }
+      }
     }
 
     for (const w of this.worms) if (!w.alive && w.state === 'dead') {
@@ -2237,6 +2541,13 @@ export class Game {
       }
     }
 
+    const debugHead = this.active?.duck?.headGroup;
+    if (debugHead) {
+      const x = `${THREE.MathUtils.radToDeg(debugHead.rotation.x).toFixed(1)}°`;
+      const y = `${THREE.MathUtils.radToDeg(debugHead.rotation.y).toFixed(1)}°`;
+      this.headRotationHud.querySelector('[data-head-rotation-x]').textContent = x;
+      this.headRotationHud.querySelector('[data-head-rotation-y]').textContent = y;
+    }
     this.updateWormLabelPositions();
     this.backgroundMaterial.uniforms.uTime.value = this.time;
     this.renderer.clear();
@@ -2434,7 +2745,15 @@ export class Game {
         const deltaX = previousMousePosition ? e.clientX - previousMousePosition.x : e.movementX || 0;
         const deltaY = previousMousePosition ? e.clientY - previousMousePosition.y : e.movementY || 0;
         const moved = Math.abs(deltaX) > 0 || Math.abs(deltaY) > 0;
-        if (moved) this.mouseCameraOverrideUntil = this.time + 1;
+        if (moved) {
+          if (this.time >= this.mouseCameraOverrideUntil) {
+            if (this.mouseCameraHasBeenUsed) this.mouseCameraNeedsReanchor = true;
+            this.mouseCameraOffset.x = 0;
+            this.mouseCameraOffset.y = 0;
+            this.mouseCameraHasBeenUsed = true;
+          }
+          this.mouseCameraOverrideUntil = this.time + 1;
+        }
         this.mousePanPosition = { x: e.clientX, y: e.clientY };
       }
     });
@@ -3116,6 +3435,12 @@ export class Game {
     this.windValue = this.windHud.querySelector('.wind-hud-value');
     this.windFill = this.windHud.querySelector('.wind-fill');
 
+    this.headRotationHud = document.createElement('aside');
+    this.headRotationHud.className = 'head-rotation-debug';
+    this.headRotationHud.hidden = true;
+    this.headRotationHud.setAttribute('aria-label', 'Текущий поворот головы');
+    this.headRotationHud.innerHTML = '<span>X: <output data-head-rotation-x>0°</output></span><span>Y: <output data-head-rotation-y>0°</output></span>';
+
     this.backgroundHudCollapsed = true;
     this.backgroundHudToggle = document.createElement('button');
     this.backgroundHudToggle.type = 'button';
@@ -3129,6 +3454,9 @@ export class Game {
       this.playerHudCollapsed = true;
       this.playerHud.hidden = true;
       this.playerHudToggle.setAttribute('aria-expanded', 'false');
+      this.animationHudCollapsed = true;
+      this.animationHud.hidden = true;
+      this.animationHudToggle.setAttribute('aria-expanded', 'false');
       this.backgroundHudToggle.setAttribute('aria-expanded', String(!this.backgroundHudCollapsed));
     });
     this.playerHudCollapsed = true;
@@ -3145,6 +3473,27 @@ export class Game {
       this.backgroundHud.hidden = true;
       this.backgroundHudToggle.setAttribute('aria-expanded', 'false');
       this.playerHudToggle.setAttribute('aria-expanded', String(!this.playerHudCollapsed));
+      this.animationHudCollapsed = true;
+      this.animationHud.hidden = true;
+      this.animationHudToggle.setAttribute('aria-expanded', 'false');
+    });
+    this.animationHudCollapsed = true;
+    this.animationHudToggle = document.createElement('button');
+    this.animationHudToggle.type = 'button';
+    this.animationHudToggle.className = 'background-hud-toggle animation-hud-toggle';
+    this.animationHudToggle.textContent = 'Анимации';
+    this.animationHudToggle.hidden = true;
+    this.animationHudToggle.setAttribute('aria-expanded', 'false');
+    this.animationHudToggle.addEventListener('click', () => {
+      this.animationHudCollapsed = !this.animationHudCollapsed;
+      this.animationHud.hidden = this.animationHudCollapsed;
+      this.backgroundHudCollapsed = true;
+      this.backgroundHud.hidden = true;
+      this.playerHudCollapsed = true;
+      this.playerHud.hidden = true;
+      this.backgroundHudToggle.setAttribute('aria-expanded', 'false');
+      this.playerHudToggle.setAttribute('aria-expanded', 'false');
+      this.animationHudToggle.setAttribute('aria-expanded', String(!this.animationHudCollapsed));
     });
     this.backgroundHud = document.createElement('aside');
     this.backgroundHud.className = 'background-hud';
@@ -3190,17 +3539,129 @@ export class Game {
       control.addEventListener('change', updateMoon);
     });
 
+    this.animationHud = document.createElement('aside');
+    this.animationHud.className = 'background-hud animation-hud';
+    this.animationHud.hidden = true;
+    this.animationHud.setAttribute('aria-label', 'Анимации игрока');
+    this.animationHud.innerHTML = '<div class="background-hud-heading"><strong>АНИМАЦИИ ИГРОКА</strong><button type="button" class="background-hud-close" aria-label="Закрыть анимации">×</button></div><div class="player-animation-controls"></div><div class="duck-animation-playback"><strong data-animation-name>Спокойно стоит</strong><label class="background-hud-range"><span>Скорость <output data-animation-speed-value>1.00×</output></span><input type="range" data-animation-speed min=".25" max="2" step=".05" value="1"></label><label class="background-hud-range"><span>Сила движения <output data-animation-strength-value>100%</output></span><input type="range" data-animation-strength min=".25" max="1.25" step=".05" value="1"></label><div class="duck-animation-actions"><button type="button" data-animation-pause>Пауза</button><button type="button" data-animation-reset>Сброс</button><button type="button" data-animation-demo aria-pressed="false">Автопоказ</button></div></div><div class="duck-animation-list"></div>';
+    this.animationHud.querySelector('.background-hud-close').addEventListener('click', () => {
+      this.animationHudCollapsed = true;
+      this.animationHud.hidden = true;
+      this.animationHudToggle.setAttribute('aria-expanded', 'false');
+    });
+    const animationOptions = [
+      ['blink', 'Моргание']
+    ];
+    const animationControls = this.animationHud.querySelector('.player-animation-controls');
+    for (const [key, labelText] of animationOptions) {
+      const label = document.createElement('label');
+      label.className = 'background-hud-check player-animation-check';
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = this.playerAnimations[key];
+      input.dataset.playerAnimation = key;
+      input.addEventListener('change', () => { this.playerAnimations[key] = input.checked; });
+      const text = document.createElement('span');
+      text.textContent = labelText;
+      label.append(input, text);
+      animationControls.append(label);
+    }
+    const animationNames = new Map(DUCK_ANIMATION_GROUPS.flatMap(([, clips]) => clips));
+    const animationButtons = new Map();
+    const selectDuckAnimation = name => {
+      this.duckAnimation.name = name;
+      this.duckAnimation.time = 0;
+      this.duckAnimation.demoTime = 0;
+      this.animationHud.querySelector('[data-animation-name]').textContent = animationNames.get(name);
+      animationButtons.forEach((button, key) => button.setAttribute('aria-pressed', String(key === name)));
+    };
+    const animationList = this.animationHud.querySelector('.duck-animation-list');
+    for (const [groupName, clips] of DUCK_ANIMATION_GROUPS) {
+      const section = document.createElement('details');
+      section.className = 'duck-animation-group';
+      section.open = true;
+      const heading = document.createElement('summary');
+      heading.textContent = groupName;
+      const grid = document.createElement('div');
+      grid.className = 'duck-animation-grid';
+      for (const [name, labelText] of clips) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = labelText;
+        button.dataset.duckAnimation = name;
+        button.setAttribute('aria-pressed', 'false');
+        button.addEventListener('click', () => selectDuckAnimation(name));
+        animationButtons.set(name, button);
+        grid.append(button);
+      }
+      section.append(heading, grid);
+      animationList.append(section);
+    }
+    const animationSpeed = this.animationHud.querySelector('[data-animation-speed]');
+    animationSpeed.addEventListener('input', () => {
+      this.duckAnimation.speed = Number(animationSpeed.value);
+      this.animationHud.querySelector('[data-animation-speed-value]').textContent = `${this.duckAnimation.speed.toFixed(2)}×`;
+    });
+    const animationStrength = this.animationHud.querySelector('[data-animation-strength]');
+    animationStrength.addEventListener('input', () => {
+      this.duckAnimation.strength = Number(animationStrength.value);
+      this.animationHud.querySelector('[data-animation-strength-value]').textContent = `${Math.round(this.duckAnimation.strength * 100)}%`;
+    });
+    this.animationHud.querySelector('[data-animation-pause]').addEventListener('click', event => {
+      this.duckAnimation.paused = !this.duckAnimation.paused;
+      event.currentTarget.textContent = this.duckAnimation.paused ? 'Продолжить' : 'Пауза';
+    });
+    this.animationHud.querySelector('[data-animation-reset]').addEventListener('click', () => {
+      this.duckAnimation.paused = false;
+      this.duckAnimation.demo = false;
+      this.animationHud.querySelector('[data-animation-pause]').textContent = 'Пауза';
+      this.animationHud.querySelector('[data-animation-demo]').setAttribute('aria-pressed', 'false');
+      selectDuckAnimation('idle');
+    });
+    this.animationHud.querySelector('[data-animation-demo]').addEventListener('click', event => {
+      this.duckAnimation.demo = !this.duckAnimation.demo;
+      this.duckAnimation.demoTime = 0;
+      event.currentTarget.setAttribute('aria-pressed', String(this.duckAnimation.demo));
+    });
+    selectDuckAnimation('idle');
+
     this.playerHud = document.createElement('aside');
     this.playerHud.className = 'background-hud player-hud';
     this.playerHud.hidden = true;
     this.playerHud.setAttribute('aria-label', 'Настройки модели игрока');
-    this.playerHud.innerHTML = '<div class="background-hud-heading"><strong>МОДЕЛЬ ИГРОКА</strong><button type="button" class="background-hud-close" aria-label="Закрыть настройки игрока">×</button></div><div class="player-model-controls"></div><div class="player-hud-actions"><button type="button" class="player-hud-action" data-player-undo disabled>Отменить изменение</button><button type="button" class="player-hud-action" data-player-copy>Копировать новые данные</button><output class="player-hud-copy-status" aria-live="polite"></output></div>';
+    this.playerHud.innerHTML = '<div class="background-hud-heading"><strong>МОДЕЛЬ ИГРОКА</strong><button type="button" class="background-hud-close" aria-label="Закрыть настройки игрока">×</button></div><div class="player-model-rotation-preview"></div><div class="player-model-controls"></div><div class="player-hud-actions"><button type="button" class="player-hud-action" data-player-undo disabled>Отменить изменение</button><button type="button" class="player-hud-action" data-player-copy>Копировать новые данные</button><output class="player-hud-copy-status" aria-live="polite"></output></div>';
     this.playerHud.querySelector('.background-hud-close').addEventListener('click', () => {
       this.playerHudCollapsed = true;
       this.playerHud.hidden = true;
       this.playerHudToggle.setAttribute('aria-expanded', 'false');
     });
     const playerControls = this.playerHud.querySelector('.player-model-controls');
+    const previewSection = document.createElement('section');
+    previewSection.className = 'player-model-group player-model-rotation-group';
+    previewSection.innerHTML = '<strong>Поворот активного игрока</strong><label class="background-hud-range player-model-range"><span><span>Угол игрока по Y</span><output data-preview-yaw-value>90°</output></span><input type="range" data-preview-yaw min="-180" max="180" step="1" value="90"></label><label class="background-hud-range player-model-range"><span><span>Скорость разворота</span><output data-player-turn-speed-value>1.80×</output></span><input type="range" data-player-turn-speed min=".25" max="3" step=".05" value="1.8"></label><label class="background-hud-range player-model-range"><span><span>Коррекция тела у нуля</span><output data-player-turn-body-blend-value>0.7°</output></span><input type="range" data-player-turn-body-blend min="0" max="30" step=".1" value="0.7"></label><small class="player-angle-hint">Вправо: +90° · влево: −90°</small>';
+    const previewInput = previewSection.querySelector('[data-preview-yaw]');
+    previewInput.addEventListener('input', () => {
+      const degrees = Number(previewInput.value);
+      const worm = this.active;
+      if (worm) {
+        if (degrees > 0) worm.facing = 1;
+        else if (degrees < 0) worm.facing = -1;
+        worm.bodyPreviewYaw = degrees * Math.PI / 180;
+        worm.bodyPreviewTurn = null;
+      }
+      previewSection.querySelector('[data-preview-yaw-value]').textContent = `${degrees}°`;
+    });
+    const turnSpeedInput = previewSection.querySelector('[data-player-turn-speed]');
+    turnSpeedInput.addEventListener('input', () => {
+      this.playerTurnSpeed = Number(turnSpeedInput.value);
+      previewSection.querySelector('[data-player-turn-speed-value]').textContent = `${this.playerTurnSpeed.toFixed(2)}×`;
+    });
+    const turnBodyBlendInput = previewSection.querySelector('[data-player-turn-body-blend]');
+    turnBodyBlendInput.addEventListener('input', () => {
+      this.playerTurnBodyBlendDegrees = Number(turnBodyBlendInput.value);
+      previewSection.querySelector('[data-player-turn-body-blend-value]').textContent = `${this.playerTurnBodyBlendDegrees.toFixed(1)}°`;
+    });
+    this.playerHud.querySelector('.player-model-rotation-preview').append(previewSection);
     const modelInputs = new Map();
     for (const [, groupName, keys] of DUCK_PARAM_GROUPS) {
       const section = document.createElement('section');
@@ -3235,9 +3696,6 @@ export class Game {
       }
       playerControls.append(section);
     }
-    const savePlayerParams = () => {
-      try { localStorage.setItem('game-worms-player-model-v11', JSON.stringify(DUCK_PARAMS)); } catch {}
-    };
     const applyPlayerParams = () => {
       for (const worm of this.worms || []) if (!worm.trainingTarget && worm.duck?.bodyMesh) this.applyDuckModelParams(worm.duck);
     };
@@ -3257,7 +3715,6 @@ export class Game {
         if (editStart) lastPlayerModelUndo = editStart;
         editStart = null;
         this.playerHud.querySelector('[data-player-undo]').disabled = !lastPlayerModelUndo;
-        savePlayerParams();
       });
     }
     this.playerHud.querySelector('[data-player-undo]').addEventListener('click', () => {
@@ -3270,7 +3727,6 @@ export class Game {
       lastPlayerModelUndo = null;
       this.playerHud.querySelector('[data-player-undo]').disabled = true;
       applyPlayerParams();
-      savePlayerParams();
     });
     this.playerHud.querySelector('[data-player-copy]').addEventListener('click', async () => {
       const status = this.playerHud.querySelector('.player-hud-copy-status');
@@ -3291,7 +3747,7 @@ export class Game {
       setTimeout(() => { status.textContent = ''; }, 1800);
     });
 
-    document.querySelector('#game-root').append(this.labels, this.turnAnnouncement, this.matchHud, this.matchHudToggle, this.teamHealthHud, this.windHud, this.backgroundHudToggle, this.playerHudToggle, this.backgroundHud, this.playerHud);
+    document.querySelector('#game-root').append(this.labels, this.turnAnnouncement, this.matchHud, this.matchHudToggle, this.teamHealthHud, this.windHud, this.headRotationHud, this.backgroundHudToggle, this.playerHudToggle, this.animationHudToggle, this.backgroundHud, this.playerHud, this.animationHud);
     this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
@@ -3313,6 +3769,9 @@ export class Game {
       this.playerHud.hidden = true;
       this.playerHudToggle.hidden = true;
       this.playerHudCollapsed = true;
+      this.animationHud.hidden = true;
+      this.animationHudToggle.hidden = true;
+      this.animationHudCollapsed = true;
       this.teamHealthHud.hidden = true;
       this.windHud.hidden = true;
       this.labels.hidden = true;
