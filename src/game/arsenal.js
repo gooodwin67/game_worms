@@ -75,12 +75,12 @@ export class Weapons {
       const p=this.byCollider.get(a),q=this.byCollider.get(b);
       if(p?.type==='fragment'&&q?.type==='fragment')return;
       const wormB=this.g.wormByCollider.get(b),wormA=this.g.wormByCollider.get(a);
-      if(p&&p.type!=='flameShot'&&!(p.type==='arrow'&&p.stuck)&&!(p.type==='arrow'&&(p.hitColliders?.has(b)||wormB&&p.hitWorms?.has(wormB)))&&!(p.ignoreOwner&&wormB===p.ignoreOwner)){
+      if(p&&p.type!=='flameShot'&&!(p.type==='arrow'&&p.stuck)&&!(p.type==='arrow'&&(p.hitColliders?.has(b)||wormB&&p.hitWorms?.has(wormB)))&&!((p.ignoreOwner||p.safeOwner)&&wormB===(p.ignoreOwner||p.safeOwner))){
         p.hit=true;
         if(p.type==='arrow'||p.type==='dragonBall'){p.hitCollider=b;p.hitWorm=wormB||p.hitWorm;}
         if(p.type==='moleBomb'&&wormB)p.hitWorm=wormB;
       }
-      if(q&&q.type!=='flameShot'&&!(q.type==='arrow'&&q.stuck)&&!(q.type==='arrow'&&(q.hitColliders?.has(a)||wormA&&q.hitWorms?.has(wormA)))&&!(q.ignoreOwner&&wormA===q.ignoreOwner)){
+      if(q&&q.type!=='flameShot'&&!(q.type==='arrow'&&q.stuck)&&!(q.type==='arrow'&&(q.hitColliders?.has(a)||wormA&&q.hitWorms?.has(wormA)))&&!((q.ignoreOwner||q.safeOwner)&&wormA===(q.ignoreOwner||q.safeOwner))){
         q.hit=true;
         if(q.type==='arrow'||q.type==='dragonBall'){q.hitCollider=a;q.hitWorm=wormA||q.hitWorm;}
         if(q.type==='moleBomb'&&wormA)q.hitWorm=wormA;
@@ -154,6 +154,8 @@ export class Weapons {
     if(['bazooka','sheepLauncher','mailstrike'].includes(type))body.addForce({x:this.g.wind*body.mass(),y:0},true);
     const homingSpeed=Math.hypot(vx,vy);
     Object.assign(p,{active:true,body,collider,type,remaining,age:0,x,y,hit:false,stuck:false,hitCollider:null,hitWorm:null,hitColliders:new Set(),hitWorms:new Set(),arrowVelocity:{x:vx,y:vy},arrowAngle:Math.atan2(vy,vx),homingComplete:false,homingStartX:x,homingStartY:y,homingArmingDistance:type==='pigeon'?4:5+THREE.MathUtils.clamp((homingSpeed-8)/24,0,1)*12,targetApproachDistance:Infinity,targetClosestDistance:Infinity,targetApproached:false,targetRecedeTime:0,restingTime:0,triggered:false,waitForMineDetonation:false,fromMoleSquadron:false,mbBombFlightSoundPending:false,mineAudio:null,launchAudios:[],airRaidGroup:null,owner:this.g.active,ownerClear:false,dir:this.g.active?.facing||1,targetX:this.target.x,targetY:this.target.y,homingSpeed,runFuseStarted:false,flightStartX:x,flightStartY:y,flightArmed:false,jumpCooldown:0,baaAudio:null,baaTimer:0,flyAudio:null,fuseLabel:p.fuseLabel||null,fuseValue:p.fuseValue||null,gas:false,stage:'walking',heading:Math.PI/2,damageOverride:null,radiusOverride:null,remoteFragment:false,tick:0,bounces:0,delay:0,flameStartX:x,flameStartY:y,flameVx:vx,flameInitialVy:vy,flameDrop:0,flameDistance:5.33,flameWobbleAmp:.45+Math.random()*.25,flameWobbleFreq:10+Math.random()*5,flameWobblePhase:Math.random()*2*Math.PI,flameWobblePhase2:Math.random()*2*Math.PI,mailSwayPhase:Math.random()*Math.PI*2,mailSwayFrequency:1.35+Math.random()*.4,mailSwayAmplitude:2.6+Math.random()*.6,napalmPhase:Math.random()*2*Math.PI});
+    p.safeOwner=this.g.active;
+    p.safeOwnerExtent=type==='arrow'?.48:radius;
     if(type==='sheep'||type==='superSheep'||type==='sheepLauncher'||type==='moleBomb'){
       if(type!=='moleBomb')p.baaAudio=this.g.audio?.play('sheepBaa')||null;
       if(!p.fuseLabel){
@@ -748,6 +750,13 @@ export class Weapons {
         p.body.setLinvel({x:p.flameVx+nx*wobble,y:p.flameInitialVy-p.flameDrop*p.age+ny*wobble},true);
       }
       const previousX=p.x,previousY=p.y,pos=p.body.translation();p.x=pos.x;p.y=pos.y;p.age+=dt;p.remaining-=dt;
+      if(p.safeOwner){
+        const ownerPosition=p.safeOwner.body.translation();
+        const bodyClear=Math.hypot(p.x-ownerPosition.x,p.y-ownerPosition.y)>.76+p.safeOwnerExtent+.03;
+        const headPosition=p.safeOwner.headCollider?.translation();
+        const headClear=!headPosition||Math.hypot(p.x-headPosition.x,p.y-headPosition.y)>.5472+p.safeOwnerExtent+.03;
+        if(!p.safeOwner.alive||(bodyClear&&headClear))p.safeOwner=null;
+      }
       if(p.type==='mbBomb'&&p.mbBombFlightSoundPending&&p.age>=2){p.mbBombFlightSoundPending=false;this.attachLaunchAudio(p,g.audio?.play('mbBombFlight'));}
       if(p.type==='mailstrike'&&!p.hit)p.body.setLinvel({x:this.g.wind*.6+Math.sin(p.age*p.mailSwayFrequency+p.mailSwayPhase)*p.mailSwayAmplitude,y:-6.4},true);
       if(p.type==='mbBomb'&&!p.hit)p.body.setLinvel({x:this.g.wind*2,y:-5},true);

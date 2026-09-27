@@ -2608,6 +2608,44 @@ button {
   padding: 6px 9px;
 }
 
+.background-time-of-day {
+  display: flex;
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.background-time-of-day button {
+  flex: 1;
+  padding: 8px 12px;
+  border: 1px solid #52738a;
+  border-radius: 8px;
+  background: #102737;
+  color: #c9dce5;
+  cursor: pointer;
+  transition: background .2s, border-color .2s;
+}
+
+.background-time-of-day button[aria-pressed="true"] {
+  border-color: #63d9d0;
+  background: #235166;
+  color: #fff;
+}
+
+.background-time-of-day button[data-sky-mode="day"][aria-pressed="true"] {
+  border-color: #f0ce78;
+  background: #55482e;
+  color: #ffedb4;
+}
+
+.background-time-of-day button:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
+.physics-debug-toggle {
+  color: #ffe08a;
+}
+
 .lighting-test-control {
   display: flex;
   align-items: center;

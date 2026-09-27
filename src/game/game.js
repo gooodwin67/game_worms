@@ -8,8 +8,10 @@ import { Weapons, Bot, ARSENAL, UNLIMITED_WEAPONS } from './weapons.js';
 import { WeaponPanel } from './weapon-panel.js';
 import { WeaponArt, disposeWeaponMesh } from './weapon-art.js';
 import { WEAPON_ICON_REGIONS } from './weapon-icon-regions.js';
+import { createConstellationGeometryData } from './constellations.js';
+import { SkyCycle, skyAppearance, DayBirds, DAY_SKY_GLSL } from './day-sky.js';
 
-const STANDING_SLOPE_NORMAL_Y = Math.cos(80 * Math.PI / 180);
+const STANDING_SLOPE_NORMAL_Y = Math.cos(75 * Math.PI / 180);
 const TARGET_CURSOR = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23ff3344' stroke-width='2'/%3E%3Cpath d='M16 1v8m0 14v8M1 16h8m14 0h8' stroke='%23ff3344' stroke-width='2'/%3E%3C/svg%3E\") 16 16, crosshair";
 const NO_AIM_WEAPONS = new Set([
   'skipGo', 'surrender', 'selectWorm', 'freeze', 'scales', 'lowGravity', 'fastWalk', 'laserSight', 'invisibility',
@@ -274,14 +276,26 @@ export class Game {
     this.audio = audio;
     this.canvas = canvas; this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-48, 48, 27, -27, .1, 200); this.camera.position.set(48, 27, 100);
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); this.renderer.setPixelRatio(Math.min(devicePixelRatio || 2, 2)); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.setClearColor(0x071a2f, 1); this.renderer.autoClear = false;
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); this.renderer.setPixelRatio(1); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.setClearColor(0x071a2f, 1); this.renderer.autoClear = false;
+    this.physicsDebugEnabled = false;
+    this.physicsDebugGeometry = new THREE.BufferGeometry();
+    this.physicsDebugMaterial = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .9, depthTest: false, depthWrite: false });
+    this.physicsDebug = new THREE.LineSegments(this.physicsDebugGeometry, this.physicsDebugMaterial);
+    this.physicsDebug.renderOrder = 1000;
+    this.physicsDebug.visible = false;
+    this.scene.add(this.physicsDebug);
 
     // Полноэкранный фон не зависит от масштаба и панорамирования карты.
     this.backgroundScene = new THREE.Scene();
     this.backgroundCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, .1, 10);
     this.backgroundCamera.position.z = 1;
+    this.skyCycle = new SkyCycle();
     this.backgroundMaterial = new THREE.ShaderMaterial({
       uniforms: {
+        uDayMix: { value: 0 },
+        uNightVisibility: { value: 1 },
+        uSunCenter: { value: new THREE.Vector2(.52, -.12) },
+        uSunVisibility: { value: 0 },
         uTime: { value: 0 },
         uResolution: { value: new THREE.Vector2(1, 1) },
         uEnabled: { value: 1 },
@@ -290,7 +304,9 @@ export class Game {
         uStarsEnabled: { value: 1 },
         uStarDensity: { value: 2.5 },
         uStarSize: { value: 2.3 },
-        uStarBrightness: { value: 2.5 }
+        uStarBrightness: { value: 2.5 },
+        uMoonCenter: { value: new THREE.Vector2(.72, .86) },
+        uMoonRadius: { value: .0315 }
       },
       vertexShader: `varying vec2 vUv;void main(){vUv=uv;gl_Position=vec4(position.xy,0.,1.);}`,
       fragmentShader: `precision highp float;
@@ -303,6 +319,12 @@ export class Game {
         uniform float uStarDensity;
         uniform float uStarSize;
         uniform float uStarBrightness;
+        uniform vec2 uMoonCenter;
+        uniform float uMoonRadius;
+        uniform float uDayMix;
+        uniform float uNightVisibility;
+        uniform vec2 uSunCenter;
+        uniform float uSunVisibility;
         varying vec2 vUv;
         float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
         float noise(vec2 p){vec2 i=floor(p),f=fract(p);f=f*f*(3.-2.*f);return mix(mix(hash(i),hash(i+vec2(1.,0.)),f.x),mix(hash(i+vec2(0.,1.)),hash(i+vec2(1.,1.)),f.x),f.y);}
@@ -315,15 +337,16 @@ export class Game {
           float core=1.-smoothstep(0.,.055*uStarSize,d);
           float crossX=(1.-smoothstep(0.,.018*uStarSize,abs(local.x)))*(1.-smoothstep(.02,.16*uStarSize,abs(local.y)));
           float crossY=(1.-smoothstep(0.,.018*uStarSize,abs(local.y)))*(1.-smoothstep(.02,.16*uStarSize,abs(local.x)));
-          float twinkle=.72+.28*sin(uTime*1.2+seed*24.);
-          return visible*(core*.75+(crossX+crossY)*.32)*twinkle;
+          float twinkle=.66+.34*sin(uTime*(1.1+hash(cell+17.)*1.8)+seed*24.);
+          float sparkle=step(.9,hash(cell+vec2(41.7,9.2)))*pow(max(0.,sin(uTime*2.1+seed*41.)),12.);
+          return visible*(core*.9+(crossX+crossY)*.42)*(twinkle+sparkle*.8);
         }
         float shootingStar(vec2 uv){
           float aspect=uResolution.x/max(uResolution.y,1.);
-          float timeSlot=floor(uTime*.14);
-          float phase=fract(uTime*.14);
+          float timeSlot=floor(uTime*.28);
+          float phase=fract(uTime*.28);
           float seed=hash(vec2(timeSlot,83.7));
-          float rare=step(.75,seed);
+          float rare=step(.5,seed);
           float angle=mix(-.42,.42,hash(vec2(timeSlot,47.3)));
           float startX=mix(.15,.85,hash(vec2(timeSlot,19.6)));
           vec2 travel=vec2(sin(angle),-cos(angle))*1.68;
@@ -339,8 +362,8 @@ export class Game {
           float fade=smoothstep(.02,.12,phase)*(1.-smoothstep(.84,1.,phase));
           return rare*(trail*.82+headGlow*1.15)*fade*smoothstep(.34,.8,uv.y);
         }
-        void main(){
-          vec2 uv=vUv;
+        ${DAY_SKY_GLSL}
+        vec3 nightSky(vec2 uv){
           float aspect=uResolution.x/max(uResolution.y,1.);
           vec2 centered=uv-.5;
           centered.x*=aspect;
@@ -362,20 +385,84 @@ export class Game {
           float auroraMask=smoothstep(.22,.56,uv.y)*(1.-smoothstep(.82,1.,uv.y));
           color+=vec3(.045,.28,.25)*aurora*auroraMask*.28;
 
-          float stars=starField(uv)*smoothstep(.34,.76,uv.y);
-          color+=vec3(.42,.70,.98)*stars*.72*uStarsEnabled*uStarBrightness;
-          color+=vec3(.70,.86,1.)*shootingStar(uv)*uStarsEnabled*.55;
+          float moonDistance=length(vec2((uv.x-uMoonCenter.x)*aspect,uv.y-uMoonCenter.y));
+          float outsideMoon=smoothstep(uMoonRadius,uMoonRadius+.012,moonDistance);
+          float stars=starField(uv)*outsideMoon*uNightVisibility;
+          color+=vec3(.58,.78,1.)*stars*.68*uStarsEnabled*uStarBrightness;
+          color+=vec3(.70,.86,1.)*shootingStar(uv)*outsideMoon*uStarsEnabled*.55*uNightVisibility;
           float focus=smoothstep(.82,.08,length(centered*vec2(.72,1.)));
           color*=mix(1.,.78,focus);
           vec2 vignetteUv=uv*(1.-uv.yx);
           float vignette=pow(clamp(vignetteUv.x*vignetteUv.y*18.,0.,1.),.28);
           color*=mix(.56,1.,vignette)*uBrightness;
           color=mix(vec3(.003,.008,.016),color,uEnabled);
+          return color;
+        }
+        void main(){
+          // Only evaluate both skies during the transition, not every frame.
+          vec3 color;
+          if(uDayMix<=0.) color=nightSky(vUv);
+          else if(uDayMix>=1.) color=daySky(vUv);
+          else {
+            color=mix(nightSky(vUv),daySky(vUv),uDayMix);
+            float twilight=pow(sin(uDayMix*3.14159265),2.);
+            color+=vec3(.12,.045,.015)*twilight*exp(-pow((vUv.y-.25)*3.,2.))*uEnabled;
+          }
           gl_FragColor=vec4(color,1.);
         }`
     });
     this.backgroundMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.backgroundMaterial);
     this.backgroundScene.add(this.backgroundMesh);
+    const skyGeometry = createConstellationGeometryData(canvas.clientWidth, canvas.clientHeight);
+    const constellationGeometry = new THREE.BufferGeometry();
+    constellationGeometry.setAttribute('position', new THREE.BufferAttribute(skyGeometry.linePositions, 3));
+    this.constellationLineBaseOpacity = .48;
+    this.constellationLineBrightness = 0;
+    this.constellationLineIntro = null;
+    this.constellationLines = new THREE.LineSegments(constellationGeometry, new THREE.LineBasicMaterial({
+      color: 0x8ea9ef, transparent: true, opacity: 0, depthTest: false, depthWrite: false
+    }));
+    this.constellationLines.renderOrder = .5;
+    this.backgroundScene.add(this.constellationLines);
+    const brightStarsGeometry = new THREE.BufferGeometry();
+    brightStarsGeometry.setAttribute('position', new THREE.BufferAttribute(skyGeometry.starPositions, 3));
+    brightStarsGeometry.setAttribute('size', new THREE.BufferAttribute(skyGeometry.starSizes, 1));
+    brightStarsGeometry.setAttribute('isPolaris', new THREE.BufferAttribute(skyGeometry.polarisFlags, 1));
+    this.constellationStars = new THREE.Points(brightStarsGeometry, new THREE.ShaderMaterial({
+      transparent: true, depthTest: false, depthWrite: false, blending: THREE.AdditiveBlending,
+      uniforms: {
+        uTime: this.backgroundMaterial.uniforms.uTime,
+        uNightVisibility: this.backgroundMaterial.uniforms.uNightVisibility,
+        uResolution: this.backgroundMaterial.uniforms.uResolution,
+        uMoonCenter: this.backgroundMaterial.uniforms.uMoonCenter,
+        uMoonRadius: this.backgroundMaterial.uniforms.uMoonRadius,
+        brightness: { value: 1.05 }, polarisBrightness: { value: 1 }
+      },
+      vertexShader: `attribute float size,isPolaris;uniform float uTime;varying float vPulse,vIsPolaris;void main(){vec4 mvPosition=modelViewMatrix*vec4(position,1.);gl_Position=projectionMatrix*mvPosition;gl_PointSize=size;vPulse=.9+.1*sin(uTime*1.4+position.x*13.+position.y*9.);vIsPolaris=isPolaris;}`,
+      fragmentShader: `precision mediump float;
+        uniform float brightness,polarisBrightness,uNightVisibility,uMoonRadius;
+        uniform vec2 uResolution,uMoonCenter;
+        varying float vPulse,vIsPolaris;
+        void main(){
+          float d=length(gl_PointCoord-.5)*2.;
+          float glow=1.-smoothstep(.12,1.,d);
+          float core=1.-smoothstep(.0,.28,d);
+          float starBrightness=brightness*mix(1.,polarisBrightness,vIsPolaris);
+          vec2 moonDelta=gl_FragCoord.xy/uResolution-uMoonCenter;
+          moonDelta.x*=uResolution.x/max(uResolution.y,1.);
+          float outsideMoon=smoothstep(uMoonRadius,uMoonRadius+.012,length(moonDelta));
+          gl_FragColor=vec4(vec3(.9,.95,1.)*1.2*(glow*.45+core)*starBrightness,
+            glow*vPulse*starBrightness*uNightVisibility*outsideMoon);
+        }`
+    }));
+    this.constellationStars.renderOrder = .6;
+    this.backgroundScene.add(this.constellationStars);
+    this.dayBirds = new DayBirds();
+    this.backgroundScene.add(this.dayBirds);
+    this.moonEnabled = true;
+    this.moonOpacityFactor = .65;
+    this.moonGlowEnabled = true;
+    this.moonGlowOpacityFactor = 1.15;
 
     const moonTexture = new THREE.TextureLoader().load('/assets/moon-texture.png');
     moonTexture.colorSpace = THREE.SRGBColorSpace;
@@ -1030,8 +1117,18 @@ export class Game {
         const body = this.world.createRigidBody(bodyDescription);
         const colliderDescription = isTrainingTarget
           ? RAPIER.ColliderDesc.ball(.66).setFriction(.2).setRestitution(.15).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
-          : RAPIER.ColliderDesc.capsule(.23, .38).setMass(1).setFriction(.38).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min).setRestitution(0).setCollisionGroups(0x00020003);
+          : RAPIER.ColliderDesc.capsule(.23, .38).setTranslation(0, -.15).setMass(1).setFriction(.7).setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max).setRestitution(0).setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min).setCollisionGroups(0x00020003);
         const collider = this.world.createCollider(colliderDescription, body);
+        const headCollider = !isTrainingTarget
+          ? this.world.createCollider(RAPIER.ColliderDesc.ball(.5472)
+            .setTranslation(.22, .78)
+            .setMass(1)
+            .setFriction(.38)
+            .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Max)
+            .setRestitution(0)
+            .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Min)
+            .setCollisionGroups(0x00020003), body)
+          : null;
 
         // Игрок остаётся уткой, учебная мишень собирается из простых геометрических примитивов.
         const duck = isTrainingTarget ? this.createTrainingTarget() : this.createDuck(COLORS[t]);
@@ -1075,7 +1172,7 @@ export class Game {
         this.labels.append(label);
 
         const worm = {
-          body, collider, mesh, duck, label, health, fuelIndicator, fuelValue, team: t,
+          body, collider, headCollider, mesh, duck, label, health, fuelIndicator, fuelValue, team: t,
           name: wormName,
           hp: isTrainingTarget ? 40 : 100, displayedHp: isTrainingTarget ? 40 : 100, pendingHp: isTrainingTarget ? 40 : 100, healthPresentationHp: isTrainingTarget ? 40 : 100, healthRevealTime: 0, healthText, pendingDamage: 0, damagePopupWaitingForHelmet: false, damagePopupHelmetStill: 0, turnMarker, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, deathTime: 0, deathSide: 1, deathStartRotation: 0, deadHelmet: null, poison: 0, radiation: 0,
           trainingTarget: isTrainingTarget,
@@ -1083,12 +1180,13 @@ export class Game {
           grounded: false, airborneTime: 0, airbornePeakY: y, hardFalling: false, knockedDown: false, impactVelocityX: 0, impactSpinDirection: 0, tumbleRotation: 0, recoverySide: -1, recoveryTime: 0, groundNormalX: 0, groundNormalY: 1,
           animTime: Math.random() * 5,
           victoryPhase: Math.random() * Math.PI * 2,
-          jumpTapTime: -Infinity, backflipEligibleUntil: -Infinity, backflipRequested: false, backflipStart: -Infinity, backflipping: false, jumpFacing: 1, autoHopCooldown: 0
+          jumpTapTime: -Infinity, backflipEligibleUntil: -Infinity, backflipRequested: false, backflipStart: -Infinity, backflipping: false, jumpFacing: 1, jumpLaunchUntil: -Infinity, autoHopCooldown: 0
         };
 
         this.worms.push(worm);
         team.worms.push(worm);
         this.wormByCollider.set(collider.handle, worm);
+        if (headCollider) this.wormByCollider.set(headCollider.handle, worm);
       }
     }
 
@@ -1443,6 +1541,7 @@ export class Game {
   createExplosion(x, y, radius, sound = 'explosion') { this.audio?.play(sound); this.weapons?.removeArrowsInBlast?.(x, y, radius); this.weapons?.detonateSupplyCrates?.(x, y, radius); const colors = this.trainingIndestructible ? [] : this.terrain.createExplosion(x, y, radius) || []; for (const w of this.worms) if (w.alive) w.body.wakeUp(); return colors; }
   startDrowning(w) {
     if (!w.alive) return;
+    w.endedTurnByFalling = true;
     const remainingHp = Math.max(0, Math.ceil(w.hp));
     w.hp = 0;
     w.pendingHp = 0;
@@ -1452,6 +1551,7 @@ export class Game {
     w.state = 'drowning';
     w.label.hidden = true;
     this.wormByCollider.delete(w.collider.handle);
+    if (w.headCollider) this.wormByCollider.delete(w.headCollider.handle);
     w.drowningTime = 0;
     w.drowningStartY = w.y;
     w.drowningStartX = w.x;
@@ -1472,6 +1572,12 @@ export class Game {
     w.body.sleep();
     w.mesh.visible = true;
     if (w.duck.eyeGroup) w.duck.eyeGroup.scale.y = .12;
+    if (w === this.active && this.turn && this.turn.state !== TURN.NEXT_TURN) {
+      this.turn.shots = 0;
+      this.audio?.stopLoop('energyCharge');
+      this.weapons.endUtility(true);
+      this.turn.settle();
+    }
     this.cameraFocus = { x: w.x, y: w.drowningSurfaceY, drowningFocus: true };
   }
 
@@ -1501,6 +1607,7 @@ export class Game {
       w.mesh.visible = true;
       w.label.hidden = true;
       this.wormByCollider.delete(w.collider.handle);
+      if (w.headCollider) this.wormByCollider.delete(w.headCollider.handle);
       w.deathTime = 0;
       w.deathSide = w.impactSpinDirection || -w.facing;
       w.deathStartRotation = w.mesh.rotation.z;
@@ -1537,7 +1644,30 @@ export class Game {
     }
   }
 
-  start() { if (this.world) { this.inMenu = false; this.matchHudCollapsed = true; this.matchHud.hidden = true; this.matchHudToggle.hidden = false; this.matchHudToggle.textContent = 'Панель'; this.matchHudToggle.setAttribute('aria-expanded', 'false'); this.backgroundHudToggle.hidden = false; this.backgroundHud.hidden = this.backgroundHudCollapsed; this.playerHudToggle.hidden = false; this.playerHud.hidden = this.playerHudCollapsed; this.playerHudToggle.setAttribute('aria-expanded', String(!this.playerHudCollapsed)); this.animationHudToggle.hidden = false; this.animationHud.hidden = this.animationHudCollapsed; this.animationHudToggle.setAttribute('aria-expanded', String(!this.animationHudCollapsed)); this.teamHealthHud.hidden = false; this.windHud.hidden = false; this.headRotationHud.hidden = false; this.labels.hidden = false; if (this.mobileControls) this.mobileControls.hidden = false; this.loop.start(); } }
+  start() {
+    if (!this.world) return;
+    if (this.inMenu) this.constellationLineIntro = { startedAt: this.time };
+    this.inMenu = false;
+    this.matchHudCollapsed = true;
+    this.matchHud.hidden = true;
+    this.matchHudToggle.hidden = false;
+    this.matchHudToggle.textContent = 'Панель';
+    this.matchHudToggle.setAttribute('aria-expanded', 'false');
+    this.backgroundHudToggle.hidden = false;
+    this.backgroundHud.hidden = this.backgroundHudCollapsed;
+    this.playerHudToggle.hidden = false;
+    this.playerHud.hidden = this.playerHudCollapsed;
+    this.playerHudToggle.setAttribute('aria-expanded', String(!this.playerHudCollapsed));
+    this.animationHudToggle.hidden = false;
+    this.animationHud.hidden = this.animationHudCollapsed;
+    this.animationHudToggle.setAttribute('aria-expanded', String(!this.animationHudCollapsed));
+    this.teamHealthHud.hidden = false;
+    this.windHud.hidden = false;
+    this.headRotationHud.hidden = false;
+    this.labels.hidden = false;
+    if (this.mobileControls) this.mobileControls.hidden = false;
+    this.loop.start();
+  }
   pause() { this.weaponPanel?.close(); this.loop.pause(); this.keys.clear(); if (this.mobileControls) this.mobileControls.hidden = true; if (this.turn?.state === TURN.CHARGING_SHOT) this.turn.cancelCharge(); }
   resume() { if (!this.inMenu && document.visibilityState === 'visible') this.start(); }
   get running() { return this.loop.running; }
@@ -1545,6 +1675,8 @@ export class Game {
 
   update(dt) {
     this.time += dt;
+    this.updateSkyEnvironment(dt);
+    this.updateConstellationLineIntro();
     for (let i = this.damagePopups.length - 1; i >= 0; i--) {
       const popup = this.damagePopups[i];
       popup.age += dt;
@@ -1600,6 +1732,7 @@ export class Game {
           w.bodyPreviewYaw = fromYaw;
           w.bodyPreviewTurn = { from: fromYaw, to: defaultPlayerYaw(direction), start: this.time, duration: .32 / this.playerTurnSpeed };
           w.facing = direction;
+          w.headCollider?.setTranslationWrtParent({ x: direction * .22, y: .78 });
         }
         w.turnBackFacing = false;
         if (Math.cos(this.angle) * direction < 0) this.angle = Math.PI - this.angle;
@@ -1614,6 +1747,7 @@ export class Game {
         w.backflipEligibleUntil = -Infinity;
         this.motion.x = -w.jumpFacing * 2.25;
         this.motion.y = 7.6;
+        w.jumpLaunchUntil = this.time + .2;
         w.body.setLinvel(this.motion, true);
         w.grounded = false;
       } else if (w.grounded) {
@@ -1635,14 +1769,22 @@ export class Game {
               break;
             }
           }
-          if (this.motion.x !== 0 && w.autoHopCooldown <= 0 && this.terrain) {
-            const nextFloor = this.terrain.landingHeight(w.x + direction * .46, .38, .61);
-            const stepUp = nextFloor !== null && nextFloor - w.y > .22 && nextFloor - w.y < 1.1;
-            if (stepUp) {
-              // Небольшой автоматический подъём через кочку, без звука прыжка.
-              w.autoHopCooldown = .35;
-              this.motion.x = direction * Math.max(3.4, Math.abs(this.motion.x));
-              this.motion.y = 2.25;
+          if (this.motion.x !== 0 && w.autoHopCooldown <= 0 && !jump) {
+            // Probe locally near the feet, not the topmost surface of the entire map.
+            // The body capsule bottom is -.15 - .23 - .38 = -.76.
+            const feetY = w.y - .76;
+            this.groundRay.origin.x = w.x + direction * .46;
+            this.groundRay.origin.y = feetY + .32;
+            this.groundRay.dir.x = 0;
+            this.groundRay.dir.y = -1;
+            const floor = this.world.castRayAndGetNormal(this.groundRay, .64, false,
+              undefined, undefined, w.collider, w.body, c => !c.isSensor() && c.parent() === null);
+            const rise = floor ? .32 - floor.timeOfImpact : 0;
+            if (floor && floor.normal.y > .5 && rise > .015 && rise <= .3) {
+              w.autoHopCooldown = .18;
+              this.motion.x = direction * Math.max(1.4, Math.abs(this.motion.x));
+              this.motion.y = Math.sqrt(2 * Math.abs(this.world.gravity.y) * (rise + .035));
+              w.jumpLaunchUntil = this.time + .18;
               w.grounded = false;
             }
           }
@@ -1656,6 +1798,7 @@ export class Game {
           w.backflipEligibleUntil = this.time + .38;
           this.motion.x = w.facing * 3.8 + w.vx * .25;
           this.motion.y = 5.8;
+          w.jumpLaunchUntil = this.time + .2;
           w.body.setLinvel(this.motion, true);
           w.grounded = false;
         }
@@ -1679,6 +1822,7 @@ export class Game {
       // активный игрок упирается в них, но физический решатель не может
       // вытолкнуть их. Их коллайдер при этом продолжает сталкиваться с землёй.
       w.collider.setCollisionGroups(0x00020003);
+      w.headCollider?.setCollisionGroups(0x00020003);
       const shouldFreeze = walkingThroughWorms && w !== this.active && w.grounded && !w.knockedDown;
       if (shouldFreeze && !w.walkingFrozen) {
         w.walkingFrozen = true;
@@ -1690,7 +1834,16 @@ export class Game {
         w.body.setLinvel(w.walkingFrozenVelocity || { x: 0, y: 0 }, true);
         w.body.wakeUp();
       }
-      w.collider.setFriction(w.slideTime > 0 || !walkable ? .12 : .38);
+      // Max previously selected the terrain's .9 even when the player requested .12.
+      // Walking supplies its own acceleration; ground friction must not cancel it.
+      const driving = w === this.active && this.humanInput() && this.turnIntroTime <= 0 &&
+        w.recoveryTime <= 0 && (this.turn.state === TURN.WAITING_INPUT || this.weapons.retreat > 0 || this.weapons.flame) &&
+        (this.keys.has('KeyA') || this.keys.has('KeyD') || this.keys.has('ArrowLeft') || this.keys.has('ArrowRight'));
+      for (const collider of [w.collider, w.headCollider]) {
+        if (!collider) continue;
+        collider.setFrictionCombineRule(RAPIER.CoefficientCombineRule.Min);
+        collider.setFriction(driving ? 0 : w.slideTime > 0 || !walkable ? .12 : .38);
+      }
       if (!walkable || w.body.isSleeping()) continue;
 
       const velocity = w.body.linvel(), nx = w.groundNormalX, ny = w.groundNormalY;
@@ -1724,9 +1877,11 @@ export class Game {
     }
     this.weapons.updateMovement(dt);
     this.world.step(this.events);
+    this.stabilizeWormContacts();
     this.weapons.update(dt);
     this.terrain?.setParticleLights(this.particles.glintData, this.weapons.getFireLightData(), this.weapons.getProjectileLightData());
     this.syncWorms(dt);
+    this.stopDeadHelmetsBelowScreen();
     this.updateSettledHelmetDamagePopups(dt);
     this.updateSupplyCrates(dt);
     this.updateDisplayedHealth(dt);
@@ -1765,7 +1920,10 @@ export class Game {
       }
       if (w.y < -3 || w.x < -3 || w.x > MAP.width + 3) {
         if (this.gameMode === 'training' && !w.trainingTarget) this.resetTrainingWorm(w);
-        else this.damage(w, w.hp, true);
+        else {
+          w.endedTurnByFalling = true;
+          this.damage(w, w.hp, true);
+        }
         continue;
       }
       const waterSurface = this.water?.getHeightAt(w.x) ?? this.baseWaterSurface + this.waterLevel;
@@ -1786,7 +1944,7 @@ export class Game {
         for (let i = -1; i <= 1; i++) {
           const offset = i * .25;
           this.groundRay.origin.x = w.x + offset;
-          this.groundRay.origin.y = w.y - .23;
+          this.groundRay.origin.y = w.y - .38;
           const footDepth = Math.sqrt(.38 * .38 - offset * offset);
           const hit = this.world.castRayAndGetNormal(this.groundRay, footDepth + .08, true, undefined, undefined, w.collider, w.body);
           if (hit && hit.normal.y > 0) {
@@ -1799,9 +1957,14 @@ export class Game {
       }
       // Убираем только мелкие вертикальные импульсы от контакта с поверхностью.
       // Сильные импульсы взрыва и отбрасывания остаются без изменений.
-      if (w.grounded && w.vy > 0 && w.vy < 2.5) {
-        w.body.setLinvel({ x: w.vx, y: 0 }, true);
-        w.vy = 0;
+      // Contacts can persist during takeoff. Do not erase a jump/step or uphill motion.
+      const launching = this.time < w.jumpLaunchUntil && w.vy > 0;
+      if (launching) w.grounded = false;
+      const normalVelocity = w.vx * w.groundNormalX + w.vy * w.groundNormalY;
+      if (w.grounded && normalVelocity > 0 && normalVelocity < 2.5) {
+        w.vx -= normalVelocity * w.groundNormalX;
+        w.vy -= normalVelocity * w.groundNormalY;
+        w.body.setLinvel({ x: w.vx, y: w.vy }, true);
       }
       if (!w.grounded) {
         w.airborneTime += dt;
@@ -1946,6 +2109,20 @@ export class Game {
     }
   }
 
+  stopDeadHelmetsBelowScreen() {
+    const screenBottom = this.camera.position.y + this.camera.bottom / Math.max(this.camera.zoom, .01);
+    for (const w of this.worms) {
+      const helmet = w.deadHelmet;
+      if (!helmet || !helmet.group.visible) continue;
+      const position = helmet.body.translation();
+      if (position.y + .65 >= screenBottom) continue;
+      helmet.body.setLinvel({ x: 0, y: 0 }, true);
+      helmet.body.setAngvel(0, true);
+      helmet.body.sleep();
+      helmet.group.visible = false;
+    }
+  }
+
   releasePendingDamagePopups() { for (const w of this.worms) this.releaseDamagePopups(w); }
 
   advanceTargetTraining(target) {
@@ -1985,10 +2162,11 @@ export class Game {
     const embedded = this.terrain.isSolid(position.x, position.y) ||
       this.terrain.isSolid(position.x - .27, position.y - .12) ||
       this.terrain.isSolid(position.x + .27, position.y - .12) ||
-      this.terrain.isSolid(position.x, position.y + .32);
+      this.terrain.isSolid(position.x, position.y + .32) ||
+      this.terrain.isSolid(position.x, position.y - .65);
     if (!embedded) return false;
 
-    const samples = [[0, .34], [-.28, .14], [.28, .14], [-.3, -.12], [.3, -.12], [0, -.49]];
+    const samples = [[0, .34], [-.28, .14], [.28, .14], [-.3, -.12], [.3, -.12], [0, -.65]];
     const isClear = y => samples.every(([dx, dy]) => !this.terrain.isSolid(position.x + dx, y + dy));
     const step = 1 / MAP.pixelsPerUnit;
     for (let lift = step; lift <= 6; lift += step) {
@@ -2001,6 +2179,34 @@ export class Game {
       return true;
     }
     return false;
+  }
+
+  stabilizeWormContacts() {
+    const pairs = new Map();
+    for (const worm of this.worms) {
+      if (!worm.alive) continue;
+      for (const collider of [worm.collider, worm.headCollider]) {
+        if (!collider) continue;
+        this.world.contactPairsWith(collider, otherCollider => {
+          const other = this.wormByCollider.get(otherCollider.handle);
+          if (!other || other === worm || !other.alive) return;
+          const first = worm.body.handle < other.body.handle ? worm : other;
+          const second = first === worm ? other : worm;
+          pairs.set(`${first.body.handle}:${second.body.handle}`, [first, second]);
+        });
+      }
+    }
+    for (const [first, second] of pairs.values()) {
+      const firstPosition = first.body.translation();
+      const secondPosition = second.body.translation();
+      if (Math.abs(firstPosition.y - secondPosition.y) < .12) continue;
+      const upper = firstPosition.y > secondPosition.y ? first : second;
+      const lower = upper === first ? second : first;
+      const upperVelocity = upper.body.linvel();
+      const lowerVelocity = lower.body.linvel();
+      if (upperVelocity.y > 0 && this.time >= upper.jumpLaunchUntil) upper.body.setLinvel({ x: upperVelocity.x, y: 0 }, true);
+      if (lowerVelocity.y < 0) lower.body.setLinvel({ x: lowerVelocity.x, y: 0 }, true);
+    }
   }
 
   render(dt, alpha) {
@@ -2553,9 +2759,42 @@ export class Game {
     this.renderer.clear();
     this.renderer.render(this.backgroundScene, this.backgroundCamera);
     this.renderer.clearDepth();
+    this.updatePhysicsDebug();
     this.renderer.render(this.scene, this.camera);
     this.hudTime += dt;
     if (this.hudTime >= .05) { this.hudTime = 0; this.updateHUD(); }
+  }
+
+  updatePhysicsDebug() {
+    if (!this.physicsDebug || !this.physicsDebugEnabled || !this.world) {
+      if (this.physicsDebug) this.physicsDebug.visible = false;
+      return;
+    }
+    const debug = this.world.debugRender();
+    const pointCount = Math.floor(debug.vertices.length / 2);
+    const positions = new Float32Array(pointCount * 3);
+    const colors = new Float32Array(pointCount * 3);
+    for (let i = 0; i < pointCount; i++) {
+      positions[i * 3] = debug.vertices[i * 2];
+      positions[i * 3 + 1] = debug.vertices[i * 2 + 1];
+      positions[i * 3 + 2] = .35;
+      colors[i * 3] = debug.colors[i * 4];
+      colors[i * 3 + 1] = debug.colors[i * 4 + 1];
+      colors[i * 3 + 2] = debug.colors[i * 4 + 2];
+    }
+    const positionAttribute = this.physicsDebugGeometry.getAttribute('position');
+    if (!positionAttribute || positionAttribute.array.length !== positions.length) {
+      this.physicsDebugGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      this.physicsDebugGeometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    } else {
+      positionAttribute.array.set(positions);
+      positionAttribute.needsUpdate = true;
+      const colorAttribute = this.physicsDebugGeometry.getAttribute('color');
+      colorAttribute.array.set(colors);
+      colorAttribute.needsUpdate = true;
+    }
+    this.physicsDebugGeometry.setDrawRange(0, pointCount);
+    this.physicsDebug.visible = true;
   }
 
   updateMoonScale() {
@@ -2563,10 +2802,65 @@ export class Game {
     const aspect = this.width / Math.max(this.height, 1);
     const heightScale = .18 * (this.moonScaleFactor ?? .7);
     this.moon.scale.set(heightScale / Math.max(aspect, .1), heightScale, 1);
+    this.backgroundMaterial?.uniforms.uMoonCenter.value.set(.5 + this.moon.position.x * .5, .5 + this.moon.position.y * .5);
+    if (this.backgroundMaterial?.uniforms.uMoonRadius) {
+      this.backgroundMaterial.uniforms.uMoonRadius.value = heightScale * .25;
+    }
     if (this.moonGlow) {
       const glowHeightScale = .38 * (this.moonGlowScaleFactor ?? 1);
       this.moonGlow.scale.set(glowHeightScale / Math.max(aspect, .1), glowHeightScale, 1);
     }
+  }
+
+  updateConstellationLayout() {
+    const { linePositions, starPositions } = createConstellationGeometryData(this.width, this.height);
+    for (const [geometry, positions] of [
+      [this.constellationLines.geometry, linePositions],
+      [this.constellationStars.geometry, starPositions]
+    ]) {
+      const attribute = geometry.getAttribute('position');
+      attribute.array.set(positions);
+      attribute.needsUpdate = true;
+      geometry.computeBoundingSphere();
+    }
+  }
+
+  updateSkyEnvironment(dt) {
+    const day = this.skyCycle.update(dt);
+    const appearance = skyAppearance(day);
+    const uniforms = this.backgroundMaterial.uniforms;
+    uniforms.uDayMix.value = day;
+    uniforms.uNightVisibility.value = appearance.nightVisibility;
+    uniforms.uSunCenter.value.set(appearance.sunX, appearance.sunY);
+    uniforms.uSunVisibility.value = appearance.sunVisibility;
+    uniforms.uMoonCenter.value.set(appearance.moonX, appearance.moonY);
+    this.moon.position.set(appearance.moonX * 2 - 1, appearance.moonY * 2 - 1, .1);
+    this.moonGlow.position.set(this.moon.position.x, this.moon.position.y, .05);
+    this.moon.visible = this.moonEnabled && appearance.moonVisibility > 0;
+    this.moon.material.opacity = .74 * this.moonOpacityFactor * appearance.moonVisibility;
+    this.moonGlow.visible = this.moonGlowEnabled && appearance.moonVisibility > 0;
+    this.moonGlow.material.opacity = .42 * this.moonGlowOpacityFactor * appearance.moonVisibility;
+    this.constellationStars.visible = appearance.nightVisibility > 0;
+    this.constellationLines.visible = appearance.nightVisibility > 0;
+    this.dayBirds.update(dt, day, this.width / Math.max(this.height, 1));
+  }
+
+  updateConstellationLineIntro() {
+    if (!this.constellationLines) return;
+    let introBrightness = 0;
+    if (this.constellationLineIntro) {
+      const elapsed = Math.max(0, this.time - this.constellationLineIntro.startedAt);
+      const pulseDuration = 2.4;
+      if (elapsed >= pulseDuration * 2) {
+        this.constellationLineIntro = null;
+      } else {
+        const pulseProgress = (elapsed % pulseDuration) / pulseDuration;
+        introBrightness = .25 * Math.sin(Math.PI * pulseProgress) ** 2;
+      }
+    }
+    this.constellationLines.material.opacity = this.constellationLineBaseOpacity
+      * Math.max(this.constellationLineBrightness, introBrightness)
+      * this.backgroundMaterial.uniforms.uNightVisibility.value;
   }
 
   resize() {
@@ -2584,6 +2878,7 @@ export class Game {
     this.renderer.setSize(width, height, false);
     this.backgroundMaterial?.uniforms.uResolution.value.set(width, height);
     this.updateMoonScale();
+    this.updateConstellationLayout();
   }
 
   installMobileControls() {
@@ -3401,7 +3696,13 @@ export class Game {
     this.matchHud.className = 'match-hud';
     this.matchHud.hidden = true;
     this.matchHudCollapsed = true;
-    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button></div><label class="lighting-test-control"><span>Свет</span><select aria-label="Режим освещения карты"><option value="soft">Мягкий</option><option value="flashlight">Фонарик</option><option value="contour">Контуры</option><option value="warm">Тёплый</option><option value="neon">Неон</option></select></label><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · ←/→ или A/D — ходить · ↑/↓ или W/S — угол оружия · Пробел — прыжок, дважды — двойной прыжок · мышь — камера · Enter — огонь · 1–5 — запал</p>';
+    this.matchHud.innerHTML = '<div class="match-status" aria-live="polite"></div><div class="weapon-row"><button type="button" class="arsenal-toggle">Арсенал · ПКМ</button><button class="restart-match">Новый матч</button><button type="button" class="physics-debug-toggle">Физблоки: выкл</button></div><label class="lighting-test-control"><span>Свет</span><select aria-label="Режим освещения карты"><option value="soft">Мягкий</option><option value="flashlight">Фонарик</option><option value="contour">Контуры</option><option value="warm">Тёплый</option><option value="neon">Неон</option></select></label><progress class="charge" max="1" value="0"></progress><p class="controls-help">ПКМ — арсенал · F1–F12 — оружие · ←/→ или A/D — ходить · ↑/↓ или W/S — угол оружия · Пробел — прыжок, дважды — двойной прыжок · мышь — камера · Enter — огонь · 1–5 — запал</p>';
+    this.physicsDebugToggle = this.matchHud.querySelector('.physics-debug-toggle');
+    this.physicsDebugToggle.addEventListener('click', () => {
+      this.physicsDebugEnabled = !this.physicsDebugEnabled;
+      this.physicsDebug.visible = this.physicsDebugEnabled;
+      this.physicsDebugToggle.textContent = `Физблоки: ${this.physicsDebugEnabled ? 'вкл' : 'выкл'}`;
+    });
     const mobileArsenalToggle = document.querySelector('.mobile-arsenal-toggle');
     this.matchHudToggle = document.createElement('button');
     this.matchHudToggle.type = 'button';
@@ -3500,6 +3801,31 @@ export class Game {
     this.backgroundHud.hidden = true;
     this.backgroundHud.setAttribute('aria-label', 'Настройки фона');
     this.backgroundHud.innerHTML = '<div class="background-hud-heading"><strong>ФОН И ЗВЁЗДЫ</strong><button type="button" class="background-hud-close" aria-label="Закрыть настройки фона">×</button></div><label class="background-hud-check"><input type="checkbox" data-background-uniform="uEnabled" checked><span>Фон</span></label><label class="background-hud-range"><span>Яркость фона <output>40%</output></span><input type="range" data-background-uniform="uBrightness" min=".4" max="1.8" step=".05" value=".4"></label><label class="background-hud-range"><span>Облака <output>165%</output></span><input type="range" data-background-uniform="uCloudStrength" min="0" max="1.8" step=".05" value="1.65"></label><label class="background-hud-check"><input type="checkbox" data-background-uniform="uStarsEnabled" checked><span>Звёзды</span></label><label class="background-hud-range"><span>Размер звёзд <output>230%</output></span><input type="range" data-background-uniform="uStarSize" min=".5" max="3" step=".1" value="2.3"></label><label class="background-hud-range"><span>Плотность звёзд <output>250%</output></span><input type="range" data-background-uniform="uStarDensity" min=".3" max="2.5" step=".1" value="2.5"></label><label class="background-hud-range"><span>Яркость звёзд <output>250%</output></span><input type="range" data-background-uniform="uStarBrightness" min=".2" max="2.5" step=".1" value="2.5"></label><label class="background-hud-check"><input type="checkbox" data-moon-property="visible" checked><span>Луна</span></label><label class="background-hud-range"><span>Размер луны <output>70%</output></span><input type="range" data-moon-property="scale" min=".5" max="1.5" step=".05" value=".7"></label><label class="background-hud-range"><span>Яркость луны <output>65%</output></span><input type="range" data-moon-property="opacity" min=".3" max="1.4" step=".05" value=".65"></label><label class="background-hud-check"><input type="checkbox" data-moon-property="glowVisible" checked><span>Ореол луны</span></label><label class="background-hud-range"><span>Размер ореола <output>170%</output></span><input type="range" data-moon-property="glowScale" min=".4" max="1.8" step=".05" value="1.7"></label><label class="background-hud-range"><span>Яркость ореола <output>115%</output></span><input type="range" data-moon-property="glowOpacity" min=".2" max="2" step=".05" value="1.15"></label>';
+    const moonVisibilityLabel = this.backgroundHud.querySelector('[data-moon-property="visible"]').closest('label');
+    for (const [property, text, defaultValue] of [
+      ['stars', 'Яркость звёзд созвездий', 1.05],
+      ['lines', 'Яркость линий созвездий', 0],
+      ['polaris', 'Яркость Полярной звезды', 1]
+    ]) {
+      const label = document.createElement('label');
+      label.className = 'background-hud-range';
+      label.innerHTML = '<span>' + text + ' <output>' + Math.round(defaultValue * 100) + '%</output></span><input type="range" data-constellation-property="' + property + '" min="0" max="2.5" step=".05" value="' + defaultValue + '">';
+      moonVisibilityLabel.before(label);
+    }
+    const skyModeControls = document.createElement('div');
+    skyModeControls.className = 'background-time-of-day';
+    skyModeControls.setAttribute('role', 'group');
+    skyModeControls.setAttribute('aria-label', 'Время суток');
+    skyModeControls.innerHTML = '<button type="button" data-sky-mode="night" aria-pressed="true">☾ Ночь</button><button type="button" data-sky-mode="day" aria-pressed="false">☀ День</button>';
+    this.backgroundHud.querySelector('.background-hud-heading').after(skyModeControls);
+    skyModeControls.querySelectorAll('[data-sky-mode]').forEach(button => {
+      button.addEventListener('click', () => {
+        this.skyCycle.setMode(button.dataset.skyMode);
+        skyModeControls.querySelectorAll('[data-sky-mode]').forEach(option => {
+          option.setAttribute('aria-pressed', String(option === button));
+        });
+      });
+    });
     this.backgroundHud.querySelector('.background-hud-close').addEventListener('click', () => {
       this.backgroundHudCollapsed = true;
       this.backgroundHud.hidden = true;
@@ -3516,23 +3842,40 @@ export class Game {
       control.addEventListener('input', updateBackgroundUniform);
       control.addEventListener('change', updateBackgroundUniform);
     });
+    this.backgroundHud.querySelectorAll('[data-constellation-property]').forEach(control => {
+      const property = control.dataset.constellationProperty;
+      const output = control.closest('label')?.querySelector('output');
+      const updateConstellationBrightness = () => {
+        const value = Number(control.value);
+        if (property === 'stars') this.constellationStars.material.uniforms.brightness.value = value;
+        if (property === 'lines') {
+          this.constellationLineBrightness = value;
+          this.updateConstellationLineIntro();
+        }
+        if (property === 'polaris') this.constellationStars.material.uniforms.polarisBrightness.value = value;
+        if (output) output.textContent = `${Math.round(value * 100)}%`;
+      };
+      control.addEventListener('input', updateConstellationBrightness);
+      control.addEventListener('change', updateConstellationBrightness);
+    });
     this.backgroundHud.querySelectorAll('[data-moon-property]').forEach(control => {
       const property = control.dataset.moonProperty;
       const output = control.closest('label')?.querySelector('output');
       const updateMoon = () => {
         const value = control.type === 'checkbox' ? control.checked : Number(control.value);
-        if (property === 'visible') this.moon.visible = value;
+        if (property === 'visible') this.moonEnabled = value;
         if (property === 'scale') {
           this.moonScaleFactor = value;
           this.updateMoonScale();
         }
-        if (property === 'opacity') this.moon.material.opacity = .74 * value;
-        if (property === 'glowVisible') this.moonGlow.visible = value;
+        if (property === 'opacity') this.moonOpacityFactor = value;
+        if (property === 'glowVisible') this.moonGlowEnabled = value;
         if (property === 'glowScale') {
           this.moonGlowScaleFactor = value;
           this.updateMoonScale();
         }
-        if (property === 'glowOpacity') this.moonGlow.material.opacity = .42 * value;
+        if (property === 'glowOpacity') this.moonGlowOpacityFactor = value;
+        this.updateSkyEnvironment(0);
         if (output && control.type !== 'checkbox') output.textContent = `${Math.round(value * 100)}%`;
       };
       control.addEventListener('input', updateMoon);

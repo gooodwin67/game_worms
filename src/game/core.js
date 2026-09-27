@@ -149,11 +149,15 @@ export class TurnMachine {
       if (!this.game.trainingFreePractice && this.remaining === 0) { if (this.state === TURN.CHARGING_SHOT) this.release(); this.game.weapons.endUtility(); this.shots = 0; this.settle(); }
     }
     if (this.state === TURN.SETTLING) {
-      if (this.game.weapons.busy()) { this.still = 0; return; }
-      let stable = true;
-      for (const w of this.game.worms) {
-        if (!w.alive || w.body.isSleeping()) continue;
-        if (w.vx * w.vx + w.vy * w.vy > 0.025 || !w.grounded) { stable = false; break; }
+      const fellOutOfBounds = this.game.active?.endedTurnByFalling;
+      if (!fellOutOfBounds && this.game.weapons.busy()) { this.still = 0; return; }
+      let stable = Boolean(fellOutOfBounds);
+      if (!fellOutOfBounds) {
+        stable = true;
+        for (const w of this.game.worms) {
+          if (!w.alive || w.body.isSleeping()) continue;
+          if (w.vx * w.vx + w.vy * w.vy > 0.025 || !w.grounded) { stable = false; break; }
+        }
       }
       this.still = stable ? this.still + dt : 0;
       if (this.still >= 0.6 && this.game.damageDisplayTime <= 0 && this.game.damagePresentationComplete()) {
