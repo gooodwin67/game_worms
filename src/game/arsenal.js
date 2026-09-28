@@ -27,6 +27,18 @@ const GUN_WEAPONS = new Set(['handgun','uzi','minigun','longbow']);
 const THROWN_GRENADES = new Set(['grenade','cluster','banana','superBanana','holy']);
 const GROUND_PROJECTILES = new Set(['bazooka','homing','pigeon','magicBullet','mortar','bomb','petrol','mbBomb','donkey','napalm','flameShot','mailstrike','carpet','armageddon','frenchSheep']);
 const NINJA_ROPE_MAX_LENGTH=20;
+function clearOwnerLaunchOffset(w,dx,dy,minimum,radius){
+  const length=Math.hypot(dx,dy)||1,nx=dx/length,ny=dy/length;
+  let offset=minimum;
+  for(let i=0;i<40;i++,offset+=.08){
+    const x=w.x+nx*offset,y=w.y+ny*offset;
+    const bodySegmentY=THREE.MathUtils.clamp(y,w.y-.53,w.y+.23);
+    const bodyClear=Math.hypot(x-w.x,y-bodySegmentY)>.23+radius+.04;
+    const headClear=Math.hypot(x-(w.x+w.facing*.22),y-(w.y+.78))>.5472+radius+.04;
+    if(bodyClear&&headClear)return offset;
+  }
+  return offset;
+}
 export class Weapons {
   constructor(game) {
     this.g=game;this.fuse=3;this.bounce=.7;this.burst=null;this.cowCount=1;this.flame=null;this.kamikaze=null;this.earthquake=null;this.pendingFirePunch=null;this.pendingBatSwing=null;this.pendingAirLaunches=[];this.projectile=null;this.lastSpawnedProjectile=null;this.retreat=0;this.drilling=0;this.drillTick=0;this.drillAngle=null;this.movementMode=null;this.ropeMiss=null;this.jetPackFuel=100;this.hazards=[];this.message='';this.ropeUsePending=false;this.ropeUseOwner=null;this.ropeUseTeam=null;this.ropeUseAirborne=false;this.ropeUseStarted=false;this.ropeUseStartPosition=null;
@@ -484,7 +496,7 @@ export class Weapons {
     if(type==='fastWalk'){for(const worm of g.teams[w.team].worms)worm.speedBoost=true;g.returnToBazooka=true;this.continueTurn();return true;}
     if(type==='laserSight'){for(const worm of g.teams[w.team].worms)worm.laserSight=true;g.returnToBazooka=true;this.continueTurn();return true;}
     if(type==='invisibility'){for(const worm of g.worms)if(worm.alive&&worm.team===w.team)worm.invisible=true;g.turn.shots=0;g.turn.settle();return true;}
-    if(type==='dragonBall'){const ball=this.spawn('dragonBall',w.x+dx*1.15,w.y+dy*1.15,dx*12,dy*12,1.6);if(ball){ball.ignoreOwner=w;ball.dir=dx<0?-1:1;}g.turn.settle();return true;}
+    if(type==='dragonBall'){const launchOffset=clearOwnerLaunchOffset(w,dx,dy,1.15,.23);const ball=this.spawn('dragonBall',w.x+dx*launchOffset,w.y+dy*launchOffset,dx*12,dy*12,1.6);if(ball){ball.ignoreOwner=w;ball.dir=dx<0?-1:1;}g.turn.settle();return true;}
     if(type==='firePunch'){
       const ninjaSound=g.audio?.play('firePunchNinja');
       if(ninjaSound)this.pendingFirePunch={owner:w,audio:ninjaSound};
@@ -533,7 +545,7 @@ export class Weapons {
     }
     if(type==='shotgun'){g.turn.lockedWeapon=type;this.shotgun();g.turn.shots--;g.turn.settle();return true;}
     if(type==='longbow'){
-      const arrow=this.spawn('arrow',w.x+dx*.85,w.y+.2+dy*.85,dx*32,dy*32,20);
+      const launchOffset=clearOwnerLaunchOffset(w,dx,dy,.85,.08);const arrow=this.spawn('arrow',w.x+dx*launchOffset,w.y+dy*launchOffset,dx*32,dy*32,20);
       if(!arrow){this.message='На карте недостаточно свободных слотов для стрелы';return false;}
       arrow.ignoreOwner=w;arrow.damageOverride=30;
       this.attachLaunchAudio(arrow,g.audio?.play('arrowLaunch'));
@@ -542,12 +554,14 @@ export class Weapons {
     if(GUN_WEAPONS.has(type)){if(type==='longbow'){g.turn.lockedWeapon=type;this.fireGun(type);g.turn.shots--;g.turn.settle();}else{if(type==='uzi')g.audio?.play('uziBurst');if(type==='minigun')g.audio?.play('minigunBurst');this.burst={type,left:type==='handgun'?4:type==='uzi'?10:type==='minigun'?16:20,tick:0,interval:type==='handgun'?.5:type==='minigun'?.06:.1,owner:w};}return true;}
     if(type==='mortar'){
       const mortarSpeed=20;
-      const mortarVy=Math.max(dy*mortarSpeed,4.5);
-      const mortar=this.spawn('mortar',w.x+dx*1.1,w.y+Math.max(.15,dy*.25),dx*mortarSpeed,mortarVy,12);
+      const mortarVx=dx*mortarSpeed;
+      const mortarVy=Math.max(Math.abs(dy)*mortarSpeed,4.5);
+      const launchLength=Math.hypot(mortarVx,mortarVy)||1;
+      const muzzleOffset=clearOwnerLaunchOffset(w,mortarVx,mortarVy,1.05,.23);
+      const mortar=this.spawn('mortar',w.x+mortarVx/Math.hypot(mortarVx,mortarVy)*muzzleOffset,w.y+mortarVy/Math.hypot(mortarVx,mortarVy)*muzzleOffset,mortarVx,mortarVy,12);
       if(mortar){mortar.ignoreOwner=w;this.attachLaunchAudio(mortar,g.audio?.play('mortarShot'));}
       return true;
-    }
-    if(type==='dynamite'||type==='mine'||type==='sheep'||type==='superSheep'){
+    }    if(type==='dynamite'||type==='mine'||type==='sheep'||type==='superSheep'){
       const projectileSpeed=type==='sheep'||type==='superSheep'?5:type==='dynamite'?0:1;
       const projectileY=type==='sheep'||type==='superSheep'?2:0;
       const fuse=type==='mine'?Infinity:type==='sheep'||type==='superSheep'?20:5;
@@ -559,7 +573,9 @@ export class Weapons {
       this.ray.origin.x=w.x;this.ray.origin.y=w.y;this.ray.dir.x=dx;this.ray.dir.y=dy;
       const obstruction=g.world.castRay(this.ray,1.15,true,undefined,undefined,w.collider,w.body);
       const offset=obstruction?Math.max(.65,obstruction.timeOfImpact-.24):1.05;
-      this.spawn('sheepLauncher',w.x+dx*offset,w.y+dy*offset,dx*speed,dy*speed,20);
+      const clearOffset=clearOwnerLaunchOffset(w,dx,dy,offset,.38);
+      const launchOffset=obstruction&&clearOffset+.38>obstruction.timeOfImpact?offset:clearOffset;
+      this.spawn('sheepLauncher',w.x+dx*launchOffset,w.y+dy*launchOffset,dx*speed,dy*speed,20);
       this.retreat=0;this.message='Enter — взорвать овечку';return true;
     }
     if(['airstrike','napalm','mailstrike','minestrike','moleSquadron'].includes(type)){
@@ -585,13 +601,17 @@ export class Weapons {
     if(type==='donkey'||type==='mbBomb'){g.audio?.play('airRaid');const targetX=this.target.x;this.scheduleAirLaunch(()=>{const projectile=this.spawn(type,targetX,MAP.height+5,0,type==='mbBomb'?-5:-8,type==='mbBomb'?20:12);if(type==='mbBomb'&&projectile)projectile.mbBombFlightSoundPending=true;});this.resetTarget();return true;}
     if(type==='banana'||type==='superBanana'||type==='holy'||type==='petrol'){
       const launchSpeed=type==='oldWoman'?2:speed,launchY=type==='oldWoman'?0:dy*launchSpeed;
-      this.spawn(type,w.x+dx,w.y+dy,dx*launchSpeed,launchY,type==='holy'?3:type==='superBanana'?20:this.fuse);this.retreat=2;this.message='Можно отойти: A/D, W';return true;
+      const launchOffset=clearOwnerLaunchOffset(w,dx,dy,1,.23);
+      this.spawn(type,w.x+dx*launchOffset,w.y+dy*launchOffset,dx*launchSpeed,launchY,type==='holy'?3:type==='superBanana'?20:this.fuse);this.retreat=2;this.message='Можно отойти: A/D, W';return true;
     }
     if(type==='mingVase'){this.spawn(type,w.x+w.facing*.9,w.y+.2,w.facing,0,5);this.retreat=3;return true;}
     this.ray.origin.x=w.x;this.ray.origin.y=w.y;this.ray.dir.x=dx;this.ray.dir.y=dy;
     const obstruction=g.world.castRay(this.ray,1.15,true,undefined,undefined,w.collider,w.body);
     const offset=obstruction?Math.max(.65,obstruction.timeOfImpact-.24):1.05;
-    const projectile=this.spawn(type,w.x+dx*offset,w.y+dy*offset,dx*speed,dy*speed,type==='grenade'||type==='cluster'?this.fuse:12);
+    const projectileRadius=type==='pigeon'?.38:.23;
+    const clearOffset=clearOwnerLaunchOffset(w,dx,dy,offset,projectileRadius);
+    const launchOffset=obstruction&&clearOffset+projectileRadius>obstruction.timeOfImpact?offset:clearOffset;
+    const projectile=this.spawn(type,w.x+dx*launchOffset,w.y+dy*launchOffset,dx*speed,dy*speed,type==='grenade'||type==='cluster'?this.fuse:12);
     if(projectile&&type==='bazooka')this.attachLaunchAudio(projectile,g.audio?.play('bazookaShot'));
     if(projectile&&type==='pigeon')this.attachLaunchAudio(projectile,g.audio?.play('pigeonLaunch'));
     else if(projectile&&['homing','magicBullet'].includes(type))this.attachLaunchAudio(projectile,g.audio?.play('homingLaunch'));

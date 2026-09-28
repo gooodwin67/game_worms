@@ -276,7 +276,9 @@ export class Game {
     this.audio = audio;
     this.canvas = canvas; this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-48, 48, 27, -27, .1, 200); this.camera.position.set(48, 27, 100);
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); this.renderer.setPixelRatio(1); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.setClearColor(0x071a2f, 1); this.renderer.autoClear = false;
+    this.duckBlendQuality = { shadowStrength: 0.625, shadowScale: 1.6, shadowOffsetY: -0.15, saturation: 0.65, highlightSoftening: 0.3, surfaceTexture: true };
+    this.terrainQuality = { pixelRatio: 1, sharpen: 0, edgeCorrection: 0.5, edgeSmoothing: 0.75 };
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); this.renderer.setPixelRatio(this.terrainQuality.pixelRatio); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.setClearColor(0x071a2f, 1); this.renderer.autoClear = false;
     this.physicsDebugEnabled = false;
     this.physicsDebugGeometry = new THREE.BufferGeometry();
     this.physicsDebugMaterial = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .9, depthTest: false, depthWrite: false });
@@ -529,6 +531,7 @@ export class Game {
 
   createTrainingTarget() {
     const root = new THREE.Group();
+
     const red = new THREE.MeshBasicMaterial({ color: 0xe53935, side: THREE.DoubleSide });
     const white = new THREE.MeshBasicMaterial({ color: 0xf7f3e8, side: THREE.DoubleSide });
     const dark = new THREE.MeshBasicMaterial({ color: 0x5b2020, side: THREE.DoubleSide });
@@ -568,19 +571,146 @@ export class Game {
     };
   }
 
+  createDuckSurfaceTextures() {
+    if (this.duckSurfaceTextures) return this.duckSurfaceTextures;
+    const makeTexture = canvas => {
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      return texture;
+    };
+    const featherCanvas = document.createElement('canvas');
+    featherCanvas.width = featherCanvas.height = 256;
+    const featherContext = featherCanvas.getContext('2d');
+    const featherGradient = featherContext.createLinearGradient(0, 0, 0, 256);
+    featherGradient.addColorStop(0, '#fffdf4');
+    featherGradient.addColorStop(.55, '#f1eddf');
+    featherGradient.addColorStop(1, '#d8d2c2');
+    featherContext.fillStyle = featherGradient;
+    featherContext.fillRect(0, 0, 256, 256);
+    let seed = 74191;
+    const random = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    for (let i = 0; i < 520; i++) {
+      const x = random() * 256, y = random() * 256;
+      const length = 2 + random() * 8;
+      featherContext.beginPath();
+      featherContext.moveTo(x, y);
+      featherContext.quadraticCurveTo(x + (random() - .5) * 3, y + length * .5, x + (random() - .5) * 2, y + length);
+      featherContext.strokeStyle = random() > .55 ? 'rgba(70, 58, 43, 0.10)' : 'rgba(255, 255, 245, 0.25)';
+      featherContext.lineWidth = .45 + random() * .7;
+      featherContext.stroke();
+    }
+    for (let i = 0; i < 150; i++) {
+      const x = random() * 256, y = random() * 256;
+      featherContext.fillStyle = random() > .5 ? 'rgba(58, 47, 39, 0.055)' : 'rgba(255, 255, 255, 0.12)';
+      featherContext.beginPath();
+      featherContext.ellipse(x, y, .5 + random() * 1.5, .7 + random() * 2.1, random(), 0, Math.PI * 2);
+      featherContext.fill();
+    }
+
+    const helmetCanvas = document.createElement('canvas');
+    helmetCanvas.width = helmetCanvas.height = 256;
+    const helmetContext = helmetCanvas.getContext('2d');
+    const helmetGradient = helmetContext.createLinearGradient(0, 0, 0, 256);
+    helmetGradient.addColorStop(0, '#fffef0');
+    helmetGradient.addColorStop(.48, '#e8e6d2');
+    helmetGradient.addColorStop(1, '#c9c6ae');
+    helmetContext.fillStyle = helmetGradient;
+    helmetContext.fillRect(0, 0, 256, 256);
+    for (let i = 0; i < 210; i++) {
+      const x = random() * 256, y = random() * 256;
+      const radius = 1 + random() * 7;
+      helmetContext.fillStyle = random() > .45 ? 'rgba(62, 54, 31, 0.11)' : 'rgba(255, 255, 238, 0.22)';
+      helmetContext.beginPath();
+      helmetContext.ellipse(x, y, radius * (1.2 + random()), radius * .38, random() * Math.PI, 0, Math.PI * 2);
+      helmetContext.fill();
+    }
+    for (let i = 0; i < 34; i++) {
+      const x = random() * 256, y = random() * 256;
+      helmetContext.beginPath();
+      helmetContext.moveTo(x, y);
+      helmetContext.lineTo(x + 2 + random() * 9, y - 1 + random() * 3);
+      helmetContext.strokeStyle = random() > .5 ? 'rgba(48, 43, 29, 0.23)' : 'rgba(255, 255, 238, 0.35)';
+      helmetContext.lineWidth = .6 + random() * 1.1;
+      helmetContext.stroke();
+    }
+    this.duckSurfaceTextures = { feather: makeTexture(featherCanvas), helmet: makeTexture(helmetCanvas) };
+    return this.duckSurfaceTextures;
+  }
+  createDuckContactShadow() {
+    if (!this.duckShadowMaterial) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 128;
+      const context = canvas.getContext('2d');
+      const gradient = context.createRadialGradient(64, 64, 2, 64, 64, 62);
+      gradient.addColorStop(0, 'rgba(10, 9, 8, 0.98)');
+      gradient.addColorStop(.42, 'rgba(10, 9, 8, 0.78)');
+      gradient.addColorStop(1, 'rgba(3, 8, 13, 0)');
+      context.fillStyle = gradient;
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      this.duckShadowTexture = new THREE.CanvasTexture(canvas);
+      this.duckShadowTexture.colorSpace = THREE.SRGBColorSpace;
+      this.duckShadowMaterial = new THREE.SpriteMaterial({
+        map: this.duckShadowTexture,
+        transparent: true,
+        opacity: this.duckBlendQuality.shadowStrength,
+        depthTest: true,
+        depthWrite: false
+      });
+    }
+    const shadow = new THREE.Sprite(this.duckShadowMaterial.clone());
+    shadow.material.opacity = this.duckBlendQuality.shadowStrength;
+    shadow.scale.set(1.15 * this.duckBlendQuality.shadowScale, .34 * this.duckBlendQuality.shadowScale, 1);
+    shadow.renderOrder = 1;
+    shadow.visible = false;
+    return shadow;
+  }
+
+  applyDuckBlendQuality(onlyDuck = null) {
+    const ducks = onlyDuck ? [onlyDuck] : (this.worms || []).map(worm => worm.duck).filter(Boolean);
+    for (const duck of ducks) {
+      for (const entry of duck.blendMaterials || []) {
+        const { material, color, specular, shininess, texture, bumpTexture } = entry;
+        if (material.color && color) {
+          const hsl = color.getHSL({});
+          material.color.setHSL(hsl.h, hsl.s * this.duckBlendQuality.saturation, hsl.l);
+        }
+        if (material.specular && specular) {
+          const softness = this.duckBlendQuality.highlightSoftening;
+          material.specular.copy(specular).multiplyScalar(1 - softness * .82);
+          material.shininess = THREE.MathUtils.lerp(shininess, 3, softness);
+        }
+        const desiredTexture = this.duckBlendQuality.surfaceTexture ? texture : null;
+        if (material.map !== desiredTexture) {
+          material.map = desiredTexture;
+          if (bumpTexture) material.bumpMap = this.duckBlendQuality.surfaceTexture ? bumpTexture : null;
+          material.needsUpdate = true;
+        }
+      }
+    }
+    if (this.duckShadowMaterial) this.duckShadowMaterial.opacity = this.duckBlendQuality.shadowStrength;
+    for (const worm of this.worms || []) {
+      if (!worm.contactShadow) continue;
+      worm.contactShadow.material.opacity = this.duckBlendQuality.shadowStrength;
+      const scale = this.duckBlendQuality.shadowScale;
+      worm.contactShadow.scale.set(1.15 * scale, .34 * scale, 1);
+    }
+  }
   // Фабрика сборки 3D-персонажа (Боевая утка)
   createDuck(teamColor) {
     const p = DUCK_PARAMS;
+    const surfaceTextures = this.createDuckSurfaceTextures();
     const root = new THREE.Group();
+    const contactShadow = this.createDuckContactShadow();
 
     // Общие материалы
-    const bodyMat = new THREE.MeshLambertMaterial({ color: teamColor });
+    const bodyMat = new THREE.MeshLambertMaterial({ color: teamColor, map: surfaceTextures.feather });
     const beakMat = new THREE.MeshPhongMaterial({ color: 0xffb51b, specular: 0x443015, shininess: 24 });
     const scleraMat = new THREE.MeshLambertMaterial({ color: 0xfff4e5 });
     const pupilMat = new THREE.MeshBasicMaterial({ color: 0x11161b });
-    const nearWingMat = new THREE.MeshPhongMaterial({ color: 0x7864bd, specular: 0x29213b, shininess: 18 });
+    const nearWingMat = new THREE.MeshPhongMaterial({ color: 0x7864bd, map: surfaceTextures.feather, specular: 0x29213b, shininess: 18 });
     const farWingMat = nearWingMat;
-    const helmetMat = new THREE.MeshPhongMaterial({ color: 0x606b36, specular: 0x383d20, shininess: 22, side: THREE.DoubleSide });
+    const helmetMat = new THREE.MeshPhongMaterial({ color: 0x606b36, map: surfaceTextures.helmet, bumpMap: surfaceTextures.helmet, bumpScale: .016, specular: 0x383d20, shininess: 22, side: THREE.DoubleSide });
     const strapMat = new THREE.MeshPhongMaterial({ color: 0x3c4224, specular: 0x202313, shininess: 16, side: THREE.DoubleSide });
 
     // 1. Тело
@@ -793,20 +923,22 @@ export class Game {
 
 
     // Черный контурный силуэт позади утки для четкого контраста на любом фоне
-    const outlineMat = new THREE.MeshBasicMaterial({ color: 0x050508, side: THREE.BackSide });
+    const outlineMat = new THREE.MeshBasicMaterial({ color: 0x151b17, side: THREE.BackSide, transparent: true, opacity: .72, depthWrite: false });
 
     // Дублируем меши тела и головы с небольшим масштабом для обводки
     const bodyOutline = new THREE.Mesh(new THREE.SphereGeometry(0.36, 16, 16), outlineMat);
-    bodyOutline.scale.set(p.bodyScaleX * 1.025, p.bodyScaleY * 1.025, p.bodyScaleZ * 1.025);
+    bodyOutline.scale.set(p.bodyScaleX * 1.018, p.bodyScaleY * 1.018, p.bodyScaleZ * 1.018);
     bodyPivot.add(bodyOutline);
 
     const headOutline = new THREE.Mesh(new THREE.SphereGeometry(0.48, 16, 16), outlineMat);
-    headOutline.scale.setScalar(1.018);
+    headOutline.scale.setScalar(1.012);
     headPivot.add(headOutline);
 
     // Вращающиеся узлы для процедурной анимации
     const duck = {
       root,
+      contactShadow,
+      blendMaterials: [bodyMat, beakMat, scleraMat, pupilMat, nearWingMat, helmetMat, strapMat, footMaterial, legMaterial].map(material => ({ material, color: material.color?.clone(), specular: material.specular?.clone(), shininess: material.shininess, texture: material.map || null, bumpTexture: material.bumpMap || null })),
       bodyPivot,
       bodyMesh,
       headGroup,
@@ -846,6 +978,7 @@ export class Game {
       object.rotation.order = 'YXZ';
     });
     this.applyDuckModelParams(duck);
+    this.applyDuckBlendQuality(duck);
     return duck;
   }
 
@@ -895,8 +1028,8 @@ export class Game {
       button.rotation.set(p.strapButtonRotX, p.strapButtonRotY, p.strapButtonRotZ);
     });
     duck.weaponPivot.position.set(.15, p.wingPosY, p.wingSpreadZ + .05);
-    duck.bodyOutline.scale.set(p.bodyScaleX * 1.025, p.bodyScaleY * 1.025, p.bodyScaleZ * 1.025);
-    duck.headOutline.scale.setScalar(1.018);
+    duck.bodyOutline.scale.set(p.bodyScaleX * 1.018, p.bodyScaleY * 1.018, p.bodyScaleZ * 1.018);
+    duck.headOutline.scale.setScalar(1.012);
     duck.feetGroup.position.set(p.feetPosX, p.feetPosY - p.bodyPosY, p.feetPosZ);
     duck.feetGroup.rotation.set(p.feetRotX, p.feetRotY, p.feetRotZ);
     duck.feetGroup.scale.set(p.feetScaleX, p.feetScaleY, p.feetScaleZ);
@@ -917,7 +1050,7 @@ export class Game {
     this.defaultMapImage = img.complete && img.naturalWidth !== 0 ? img : null;
 
     const targetTrainingMap = new Image();
-    targetTrainingMap.src = `${import.meta.env.BASE_URL}training/2.png`;
+    targetTrainingMap.src = `${import.meta.env.BASE_URL}training/mission-platforms.jpg`;
     await new Promise(resolve => {
       targetTrainingMap.onload = resolve;
       targetTrainingMap.onerror = resolve;
@@ -950,6 +1083,7 @@ export class Game {
       this.water?.dispose();
       for (const w of this.worms) {
         disposeWeaponMesh(w.duck.weaponMesh);
+        w.contactShadow?.removeFromParent();
         w.duck.dispose();
         w.label.remove();
         w.drowningDamagePopup?.remove();
@@ -993,7 +1127,8 @@ export class Game {
 
     this.terrain = new Terrain(this.scene, this.world, mapImage);
     this.terrain.setLightingMode(this.lightingMode);
-    if (this.gameMode === 'training') {
+    this.applyTerrainQuality();
+    if (this.gameMode === 'training' && this.trainingScenario?.map !== 'target') {
       this.terrain.addSurfaceGrass();
       this.terrain.addTrainingBlock(36.3, 48.2, 8.1, 5.1);
       this.terrain.addTrainingBlock(69.3, 48.2, 17.2, 5.9);
@@ -1134,6 +1269,7 @@ export class Game {
         const duck = isTrainingTarget ? this.createTrainingTarget() : this.createDuck(COLORS[t]);
         const mesh = new THREE.Group();
         mesh.add(duck.root);
+        if (duck.contactShadow) this.scene.add(duck.contactShadow);
         mesh.position.set(x, y, 0);
         this.scene.add(mesh);
 
@@ -1172,7 +1308,7 @@ export class Game {
         this.labels.append(label);
 
         const worm = {
-          body, collider, headCollider, mesh, duck, label, health, fuelIndicator, fuelValue, team: t,
+          body, collider, headCollider, mesh, duck, contactShadow: duck.contactShadow, label, health, fuelIndicator, fuelValue, team: t,
           name: wormName,
           hp: isTrainingTarget ? 40 : 100, displayedHp: isTrainingTarget ? 40 : 100, pendingHp: isTrainingTarget ? 40 : 100, healthPresentationHp: isTrainingTarget ? 40 : 100, healthRevealTime: 0, healthText, pendingDamage: 0, damagePopupWaitingForHelmet: false, damagePopupHelmetStill: 0, turnMarker, alive: true, state: 'airborne', facing: isTrainingTarget ? -1 : 1, deathTime: 0, deathSide: 1, deathStartRotation: 0, deadHelmet: null, poison: 0, radiation: 0,
           trainingTarget: isTrainingTarget,
@@ -1383,6 +1519,7 @@ export class Game {
 
   createSupplyCrate() {
     const root = new THREE.Group();
+
     const crateTexture = new THREE.TextureLoader().load(`${import.meta.env.BASE_URL}assets/weapon-crate.png`);
     crateTexture.colorSpace = THREE.SRGBColorSpace;
     crateTexture.minFilter = THREE.LinearFilter;
@@ -1644,6 +1781,17 @@ export class Game {
     }
   }
 
+  applyTerrainQuality() {
+    const uniforms = this.terrain?.material?.uniforms;
+    if (uniforms) {
+      uniforms.sharpenStrength.value = this.terrainQuality.sharpen;
+      uniforms.edgeColorCorrection.value = this.terrainQuality.edgeCorrection;
+      uniforms.edgeSmoothing.value = this.terrainQuality.edgeSmoothing;
+    }
+    this.renderer.setPixelRatio(this.terrainQuality.pixelRatio);
+    this.resize();
+  }
+
   start() {
     if (!this.world) return;
     if (this.inMenu) this.constellationLineIntro = { startedAt: this.time };
@@ -1654,6 +1802,8 @@ export class Game {
     this.matchHudToggle.textContent = 'Панель';
     this.matchHudToggle.setAttribute('aria-expanded', 'false');
     this.backgroundHudToggle.hidden = false;
+    this.qualityHudToggle.hidden = false;
+    this.qualityHud.hidden = this.qualityHudCollapsed;
     this.backgroundHud.hidden = this.backgroundHudCollapsed;
     this.playerHudToggle.hidden = false;
     this.playerHud.hidden = this.playerHudCollapsed;
@@ -1806,6 +1956,15 @@ export class Game {
       const girderPlacement = this.weapons.isGirder(this.turn.weapon) && this.turn.state === TURN.WAITING_INPUT;
       const verticalAim = girderPlacement ? 0 :
         (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
+        (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
+      if (verticalAim) this.angle = clampAimForWeapon(this.angle + verticalAim * (w.facing < 0 ? -1 : 1) * dt, w.facing, this.turn.weapon);
+    }
+
+    // Заряд выстрела не блокирует вертикальное прицеливание, но ходьба и прыжки остаются выключены.
+    if (this.humanInput() && this.turnIntroTime <= 0 && this.active.recoveryTime <= 0 &&
+        this.turn.state === TURN.CHARGING_SHOT && this.weapons.needsCharge(this.turn.weapon)) {
+      const w = this.active;
+      const verticalAim = (this.keys.has('KeyW') || this.keys.has('ArrowUp') ? 1 : 0) -
         (this.keys.has('KeyS') || this.keys.has('ArrowDown') ? 1 : 0);
       if (verticalAim) this.angle = clampAimForWeapon(this.angle + verticalAim * (w.facing < 0 ? -1 : 1) * dt, w.facing, this.turn.weapon);
     }
@@ -2374,6 +2533,33 @@ export class Game {
       const posX = w.previousX + (w.x - w.previousX) * alpha;
       const posY = w.previousY + (w.y - w.previousY) * alpha;
       w.mesh.position.set(posX, posY, 0);
+      if (w.contactShadow) {
+        let groundY = -Infinity;
+        if (w.alive && !w.invisible && this.duckBlendQuality.shadowStrength > 0) {
+          // Один луч по центру может пройти в щель между пикселями/блоками,
+          // хотя капсула игрока опирается на края. Проверяем ширину опоры.
+          for (const footOffset of [-.3, 0, .3]) {
+            this.groundRay.origin.x = posX + footOffset;
+            this.groundRay.origin.y = posY + .12;
+            const hit = this.world.castRayAndGetNormal(this.groundRay, 12, true, undefined, undefined, w.collider, w.body, collider => !collider.isSensor() && collider.parent() === null);
+            if (hit?.normal?.y > .15) groundY = Math.max(groundY, this.groundRay.origin.y - hit.timeOfImpact);
+          }
+        }
+        if (Number.isFinite(groundY)) {
+          const footGap = Math.max(0, posY - .76 - groundY);
+          const opacityFactor = THREE.MathUtils.clamp(1 - footGap / 2.4, 0, 1);
+          w.contactShadow.visible = opacityFactor > .01;
+          w.contactShadow.material.opacity = this.duckBlendQuality.shadowStrength * opacityFactor;
+          w.contactShadow.position.set(posX, groundY + this.duckBlendQuality.shadowOffsetY, -.12);
+        } else {
+          w.contactShadow.visible = false;
+        }
+      }
+      if (w.trainingTarget) {
+        w.mesh.rotation.z = 0;
+        w.duck.root.rotation.set(0, 0, 0);
+        continue;
+      }
 
       let previewYaw = w.bodyPreviewYaw ?? defaultPlayerYaw(w.facing);
       const previewTurn = w.bodyPreviewTurn;
@@ -3222,9 +3408,9 @@ export class Game {
       return `<svg class="mission-weapon-icon" aria-hidden="true" viewBox="0 0 ${width} ${height}" focusable="false"><svg width="${width}" height="${height}" viewBox="${x} ${y} ${width} ${height}" overflow="hidden"><image href="${import.meta.env.BASE_URL}assets/weapon-atlas.png" width="749" height="2098"></image></svg></svg>`;
     };
     const missionDetails = {
-      bazooka: { subtitle: 'Точный выстрел', objective: 'Поразьте все мишени минимальным количеством выстрелов', difficulty: 2, reward: 'Новая техника', tint: 'warm', map: 'training/2.png' },
-      grenade: { subtitle: 'Взрывной бросок', objective: 'Уничтожьте все цели одним точным броском', difficulty: 1, reward: 'Новый арсенал', tint: 'violet', map: 'training/2.png' },
-      mortar: { subtitle: 'Точный выстрел', objective: 'Поразьте все мишени минимальным количеством выстрелов', difficulty: 2, reward: 'Новая техника', tint: 'warm', map: 'training/2.png' }
+      bazooka: { subtitle: 'Точный выстрел', objective: 'Поразьте все мишени минимальным количеством выстрелов', difficulty: 2, reward: 'Новая техника', tint: 'warm', map: 'training/mission-platforms.jpg' },
+      grenade: { subtitle: 'Взрывной бросок', objective: 'Уничтожьте все цели одним точным броском', difficulty: 1, reward: 'Новый арсенал', tint: 'violet', map: 'training/mission-platforms.jpg' },
+      mortar: { subtitle: 'Точный выстрел', objective: 'Поразьте все мишени минимальным количеством выстрелов', difficulty: 2, reward: 'Новая техника', tint: 'warm', map: 'training/mission-platforms.jpg' }
     };
     const missionMapUrl = details => `${import.meta.env.BASE_URL}${details.map}`;
     const missionPreview = (weapon, side) => {
@@ -3416,9 +3602,9 @@ export class Game {
       <div class="quick-setup-grid">
         <section class="setup-card setup-map-card">
           <h2>🗺️ Карта</h2>
-          <div class="setup-map-switcher"><button type="button" class="map-arrow map-prev" aria-label="Предыдущая карта">‹</button><img class="setup-map-preview" src="./maps/sky-islands.png" alt="Предпросмотр карты"><div class="setup-map-placeholder" hidden>Карта будет<br>сгенерирована<br>перед матчем</div><button type="button" class="map-arrow map-next" aria-label="Следующая карта">›</button></div>
-          <strong class="setup-map-name">Небесные острова</strong>
-          <p class="setup-map-description">Классическая карта с островами и удобными позициями.</p>
+          <div class="setup-map-switcher"><button type="button" class="map-arrow map-prev" aria-label="Предыдущая карта">‹</button><img class="setup-map-preview" src="./maps/winter-outpost.jpg" alt="Предпросмотр карты"><div class="setup-map-placeholder" hidden>Карта будет<br>сгенерирована<br>перед матчем</div><button type="button" class="map-arrow map-next" aria-label="Следующая карта">›</button></div>
+          <strong class="setup-map-name">Ледяной форпост</strong>
+          <p class="setup-map-description">Снежные острова и ледяная база над пропастью.</p>
           <div class="map-thumbnails" aria-label="Миниатюры карт"></div>
           <div class="setup-map-actions"><button type="button" class="setup-random-map"><span aria-hidden="true">⚄</span> Случайная карта</button><button type="button" class="setup-generate-map"><span aria-hidden="true">⤨</span> Генерация</button></div>
           <div class="map-select-row" hidden><label><input type="radio" name="mapSource" value="generate"> Генерировать</label><label><input type="radio" name="mapSource" value="custom" checked> Из файла</label><input type="file" id="map-file-input" accept="image/png, image/jpeg, image/webp"></div>
@@ -3455,12 +3641,12 @@ export class Game {
     this.customMapImage = null;
     this.uploadedMapImage = null;
     const mapCatalog = [
-      { file: 'sky-islands.png', name: 'Небесные острова', description: 'Классическая карта с островами и удобными позициями.' },
-      { file: 'fortress-islands.jpg', name: 'Островные крепости', description: 'Карта с крепостями и открытыми площадками.' },
-      { file: 'waterfall-valley.jpg', name: 'Долина водопадов', description: 'Высоты, впадины и водопады для тактических атак.' },
-      { file: 'rocky-hills.jpg', name: 'Каменистые холмы', description: 'Неровный рельеф с множеством укрытий.' },
-      { file: 'green-islands.jpg', name: 'Зелёные острова', description: 'Островная карта с естественными перепадами высоты.' },
-      { file: 'desert-canyon.jpg', name: 'Пустынный каньон', description: 'Каньоны и открытые склоны для дальних выстрелов.' }
+      { file: 'winter-outpost.jpg', name: 'Ледяной форпост', description: 'Снежные острова и ледяная база над пропастью.' },
+      { file: 'halloween-ruins.jpg', name: 'Тыквенные руины', description: 'Осенние острова, старый замок и тыквенные фонари.' },
+      { file: 'football-islands.jpg', name: 'Футбольные острова', description: 'Парящие футбольные поля и каменные платформы.' },
+      { file: 'desert-pyramids.jpg', name: 'Пустынные пирамиды', description: 'Песчаные платформы, ступени и древние пирамиды.' },
+      { file: 'castle-valley.jpg', name: 'Крепостная долина', description: 'Старинные замки и каменные острова.' },
+      { file: 'basketball.jpg', name: 'Баскетбольные острова', description: 'Парящие баскетбольные площадки с кольцом и трибунами.' }
     ];
     this.mapCatalog = mapCatalog;
     this.mapImageReady = [];
@@ -3750,6 +3936,9 @@ export class Game {
     this.backgroundHudToggle.hidden = true;
     this.backgroundHudToggle.setAttribute('aria-expanded', 'false');
     this.backgroundHudToggle.addEventListener('click', () => {
+      this.qualityHudCollapsed = true;
+      this.qualityHud.hidden = true;
+      this.qualityHudToggle.setAttribute('aria-expanded', 'false');
       this.backgroundHudCollapsed = !this.backgroundHudCollapsed;
       this.backgroundHud.hidden = this.backgroundHudCollapsed;
       this.playerHudCollapsed = true;
@@ -3768,6 +3957,9 @@ export class Game {
     this.playerHudToggle.hidden = true;
     this.playerHudToggle.setAttribute('aria-expanded', 'false');
     this.playerHudToggle.addEventListener('click', () => {
+      this.qualityHudCollapsed = true;
+      this.qualityHud.hidden = true;
+      this.qualityHudToggle.setAttribute('aria-expanded', 'false');
       this.playerHudCollapsed = !this.playerHudCollapsed;
       this.playerHud.hidden = this.playerHudCollapsed;
       this.backgroundHudCollapsed = true;
@@ -3786,6 +3978,9 @@ export class Game {
     this.animationHudToggle.hidden = true;
     this.animationHudToggle.setAttribute('aria-expanded', 'false');
     this.animationHudToggle.addEventListener('click', () => {
+      this.qualityHudCollapsed = true;
+      this.qualityHud.hidden = true;
+      this.qualityHudToggle.setAttribute('aria-expanded', 'false');
       this.animationHudCollapsed = !this.animationHudCollapsed;
       this.animationHud.hidden = this.animationHudCollapsed;
       this.backgroundHudCollapsed = true;
@@ -4091,6 +4286,95 @@ export class Game {
     });
 
     document.querySelector('#game-root').append(this.labels, this.turnAnnouncement, this.matchHud, this.matchHudToggle, this.teamHealthHud, this.windHud, this.headRotationHud, this.backgroundHudToggle, this.playerHudToggle, this.animationHudToggle, this.backgroundHud, this.playerHud, this.animationHud);
+    this.qualityHudCollapsed = true;
+    this.qualityHudToggle = document.createElement('button');
+    this.qualityHudToggle.type = 'button';
+    this.qualityHudToggle.className = 'background-hud-toggle quality-hud-toggle';
+    this.qualityHudToggle.textContent = 'Качество';
+    this.qualityHudToggle.hidden = true;
+    this.qualityHudToggle.setAttribute('aria-expanded', 'false');
+    this.qualityHud = document.createElement('aside');
+    this.qualityHud.className = 'background-hud quality-hud';
+    this.qualityHud.hidden = true;
+    this.qualityHud.setAttribute('aria-label', 'Настройки качества карты');
+    this.qualityHud.innerHTML = '<div class="background-hud-heading"><strong>КАЧЕСТВО КАРТЫ</strong><button type="button" class="background-hud-close" aria-label="Закрыть настройки качества">×</button></div><p class="quality-hud-note">Настройки применяются сразу. Чёрный фон по краям по-прежнему вырезается.</p><label class="background-hud-range"><span>Резкость <output data-quality-value="sharpen">0%</output></span><input type="range" data-quality="sharpen" min="0" max="0.8" step="0.05" value="0"></label><label class="background-hud-range"><span>Коррекция цвета края <output data-quality-value="edgeCorrection">50%</output></span><input type="range" data-quality="edgeCorrection" min="0" max="1" step="0.05" value="0.5"></label><label class="background-hud-range"><span>Сглаживание кромки <output data-quality-value="edgeSmoothing">75%</output></span><input type="range" data-quality="edgeSmoothing" min="0" max="1" step="0.05" value="0.75"></label><label class="background-hud-range"><span>Разрешение рендера <output data-quality-value="pixelRatio">1.0×</output></span><input type="range" data-quality="pixelRatio" min="1" max="2" step="0.1" value="1"></label><h3 class="quality-hud-section">УТКИ В СЦЕНЕ</h3><label class="background-hud-check"><input type="checkbox" data-duck-texture-toggle checked><span>Матовая рисованная фактура</span></label><label class="background-hud-range"><span>Сила тени под лапами <output data-duck-quality-value="shadowStrength">63%</output></span><input type="range" data-duck-quality="shadowStrength" min="0" max="0.9" step="0.025" value="0.625"></label><label class="background-hud-range"><span>Размер тени <output data-duck-quality-value="shadowScale">1.6×</output></span><input type="range" data-duck-quality="shadowScale" min="0.5" max="1.8" step="0.05" value="1.6"></label><label class="background-hud-range"><span>Положение тени по Y <output data-duck-quality-value="shadowOffsetY">-0.15</output></span><input type="range" data-duck-quality="shadowOffsetY" min="-2" max="2" step="0.05" value="-0.15"></label><label class="background-hud-range"><span>Насыщенность цветов <output data-duck-quality-value="saturation">65%</output></span><input type="range" data-duck-quality="saturation" min="0.45" max="1" step="0.05" value="0.65"></label><label class="background-hud-range"><span>Смягчение бликов <output data-duck-quality-value="highlightSoftening">30%</output></span><input type="range" data-duck-quality="highlightSoftening" min="0" max="1" step="0.05" value="0.3"></label><button type="button" class="quality-hud-reset">Сбросить качество</button>';
+    const closeQualityHud = () => {
+      this.qualityHudCollapsed = true;
+      this.qualityHud.hidden = true;
+      this.qualityHudToggle.setAttribute('aria-expanded', 'false');
+    };
+    this.qualityHudToggle.addEventListener('click', () => {
+      this.qualityHudCollapsed = !this.qualityHudCollapsed;
+      this.qualityHud.hidden = this.qualityHudCollapsed;
+      if (!this.qualityHudCollapsed) {
+        this.backgroundHudCollapsed = this.playerHudCollapsed = this.animationHudCollapsed = true;
+        this.backgroundHud.hidden = this.playerHud.hidden = this.animationHud.hidden = true;
+        this.backgroundHudToggle.setAttribute('aria-expanded', 'false');
+        this.playerHudToggle.setAttribute('aria-expanded', 'false');
+        this.animationHudToggle.setAttribute('aria-expanded', 'false');
+      }
+      this.qualityHudToggle.setAttribute('aria-expanded', String(!this.qualityHudCollapsed));
+    });
+    this.qualityHud.querySelector('.background-hud-close').addEventListener('click', closeQualityHud);
+    const qualityDefaults = {
+      sharpen: 0,
+      edgeCorrection: 0.5,
+      edgeSmoothing: 0.75,
+      pixelRatio: 1
+    };
+    const updateQualityValue = (property, value) => {
+      const output = this.qualityHud.querySelector(`[data-quality-value="${property}"]`);
+      if (!output) return;
+      output.textContent = property === 'pixelRatio'
+        ? `${Number(value).toFixed(1)}×`
+        : `${Math.round(Number(value) / (property === 'sharpen' ? 0.8 : 1) * 100)}%`;
+    };
+    this.qualityHud.querySelectorAll('[data-quality]').forEach(control => {
+      const property = control.dataset.quality;
+      control.value = String(this.terrainQuality[property]);
+      updateQualityValue(property, control.value);
+      control.addEventListener('input', () => {
+        this.terrainQuality[property] = Number(control.value);
+        updateQualityValue(property, control.value);
+        this.applyTerrainQuality();
+      });
+    });
+    const duckQualityDefaults = { shadowStrength: 0.625, shadowScale: 1.6, shadowOffsetY: -0.15, saturation: 0.65, highlightSoftening: 0.3, surfaceTexture: true };
+    this.qualityHud.querySelectorAll('[data-duck-quality]').forEach(control => {
+      const property = control.dataset.duckQuality;
+      control.value = String(this.duckBlendQuality[property]);
+      const output = this.qualityHud.querySelector(`[data-duck-quality-value="${property}"]`);
+      const updateOutput = () => {
+        const value = Number(control.value);
+        output.textContent = property === 'shadowScale'
+          ? `${value.toFixed(1)}×`
+          : property === 'shadowOffsetY'
+            ? value.toFixed(2)
+            : `${Math.round(value * 100)}%`;
+      };
+      updateOutput();
+      control.addEventListener('input', () => {
+        this.duckBlendQuality[property] = Number(control.value);
+        updateOutput();
+        this.applyDuckBlendQuality();
+      });
+    });    const duckTextureToggle = this.qualityHud.querySelector('[data-duck-texture-toggle]');
+    duckTextureToggle.addEventListener('change', () => {
+      this.duckBlendQuality.surfaceTexture = duckTextureToggle.checked;
+      this.applyDuckBlendQuality();
+    });    this.qualityHud.querySelector('.quality-hud-reset').addEventListener('click', () => {
+      Object.assign(this.terrainQuality, qualityDefaults);
+      Object.assign(this.duckBlendQuality, duckQualityDefaults);
+      duckTextureToggle.checked = duckQualityDefaults.surfaceTexture;
+      this.qualityHud.querySelectorAll('[data-quality]').forEach(control => {
+        control.value = String(this.terrainQuality[control.dataset.quality]);
+        updateQualityValue(control.dataset.quality, control.value);
+      });
+      this.applyTerrainQuality();
+      this.applyDuckBlendQuality();
+    });
+    this.qualityHudToggle.addEventListener('click', () => {});
+    document.querySelector('#game-root').append(this.qualityHudToggle, this.qualityHud);
     this.weaponButtons = this.weaponPanel.buttons;
     this.status = this.matchHud.querySelector('.match-status');
     this.chargeBar = this.matchHud.querySelector('.charge');
@@ -4115,6 +4399,9 @@ export class Game {
       this.animationHud.hidden = true;
       this.animationHudToggle.hidden = true;
       this.animationHudCollapsed = true;
+      this.qualityHud.hidden = true;
+      this.qualityHudToggle.hidden = true;
+      this.qualityHudCollapsed = true;
       this.teamHealthHud.hidden = true;
       this.windHud.hidden = true;
       this.labels.hidden = true;

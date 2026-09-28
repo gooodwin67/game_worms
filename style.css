@@ -1441,6 +1441,41 @@ button {
 .animation-hud-toggle {
   top: max(134px, calc(env(safe-area-inset-top) + 120px));
 }
+.quality-hud-toggle {
+  top: max(170px, calc(env(safe-area-inset-top) + 156px));
+}
+
+.quality-hud {
+  top: max(212px, calc(env(safe-area-inset-top) + 198px));
+  width: min(300px, calc(100% - 24px));
+  max-height: calc(100dvh - 228px);
+}
+
+.quality-hud-section {
+  margin: 14px 0 6px;
+  padding-top: 10px;
+  border-top: 1px solid rgb(117 158 183 / 35%);
+  color: #8ee0d5;
+  font-size: 11px;
+  letter-spacing: .08em;
+}
+.quality-hud-note {
+  margin: 0 0 10px;
+  color: #9ebac8;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.quality-hud-reset {
+  width: 100%;
+  margin-top: 5px;
+  padding: 7px 9px;
+  border: 1px solid #52738a;
+  border-radius: 7px;
+  color: #e9f7ff;
+  background: #17344a;
+  cursor: pointer;
+}
 
 .background-hud {
   position: absolute;

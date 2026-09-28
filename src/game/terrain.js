@@ -15,19 +15,76 @@ export class Terrain {
     this.hasCustomImage = !!customImage;
 
     if (customImage) {
-      // Отрисовываем пользовательскую карту
+      // Сглаживаем масштабирование исходной карты, чтобы не увеличивать ступенчатость контура.
+      this.ctx.imageSmoothingEnabled = true;
+      this.ctx.imageSmoothingQuality = 'high';
       this.ctx.drawImage(customImage, 0, 0, this.canvas.width, this.canvas.height);
 
-      // Превращаем чистый черный цвет фона (#000000) в прозрачный воздух
+      // Убираем только почти чёрный фон, связанный с краем картинки.
+      // Тёмные пиксели внутри земли (например, тени и пещеры) должны остаться.
       const imgData = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height);
       const d = imgData.data;
-      for (let i = 0; i < d.length; i += 4) {
-        // Если пиксель почти черный — делаем его прозрачным
-        if (d[i] < 12 && d[i + 1] < 12 && d[i + 2] < 12) {
-          d[i + 3] = 0;
+      const width = imgData.width, height = imgData.height;
+      const backgroundQueue = new Int32Array(width * height);
+      let queueEnd = 0;
+      const isBackgroundBlack = pixel => Math.max(d[pixel], d[pixel + 1], d[pixel + 2]) < 32;
+      const addBackgroundPixel = index => {
+        const pixel = index * 4;
+        if (d[pixel + 3] === 0 || !isBackgroundBlack(pixel)) return;
+        d[pixel + 3] = 0;
+        backgroundQueue[queueEnd++] = index;
+      };
+      for (let x = 0; x < width; x++) {
+        addBackgroundPixel(x);
+        addBackgroundPixel((height - 1) * width + x);
+      }
+      for (let y = 1; y < height - 1; y++) {
+        addBackgroundPixel(y * width);
+        addBackgroundPixel(y * width + width - 1);
+      }
+      for (let head = 0; head < queueEnd; head++) {
+        const index = backgroundQueue[head];
+        const x = index % width, y = Math.floor(index / width);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          if (!dx && !dy) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx >= 0 && nx < width && ny >= 0 && ny < height) addBackgroundPixel(ny * width + nx);
         }
       }
-      this.removeTinyIslands(imgData, 48);
+      // В JPG чёрный фон даёт тёмные компрессионные фрагменты у вырезов.
+      // Убираем также небольшие замкнутые фрагменты, чтобы они не становились
+      // чёрными пятнами и ложными коллайдерами.
+      const visitedBlack = new Uint8Array(width * height);
+      const largeBlackRegion = Math.max(12, Math.floor(width * height * 0.00001));
+      for (let start = 0; start < width * height; start++) {
+        const startPixel = start * 4;
+        if (visitedBlack[start] || d[startPixel + 3] === 0 || !isBackgroundBlack(startPixel)) continue;
+        let componentStart = queueEnd;
+        let componentEnd = componentStart + 1;
+        let minX = start % width, maxX = minX;
+        let minY = Math.floor(start / width), maxY = minY;
+        backgroundQueue[componentStart] = start;
+        visitedBlack[start] = 1;
+        for (let head = componentStart; head < componentEnd; head++) {
+          const index = backgroundQueue[head];
+          const x = index % width, y = Math.floor(index / width);
+          minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+          minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx, ny = y + dy;
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            const next = ny * width + nx, pixel = next * 4;
+            if (visitedBlack[next] || d[pixel + 3] === 0 || !isBackgroundBlack(pixel)) continue;
+            visitedBlack[next] = 1;
+            backgroundQueue[componentEnd++] = next;
+          }
+        }
+        if (componentEnd - componentStart >= largeBlackRegion && maxX - minX + 1 >= 2 && maxY - minY + 1 >= 2) {
+          for (let i = componentStart; i < componentEnd; i++) d[backgroundQueue[i] * 4 + 3] = 0;
+        }
+        queueEnd = componentEnd;
+      }
       this.ctx.putImageData(imgData, 0, 0);
     } else {
       this.generateProcedural();
@@ -77,6 +134,9 @@ export class Terrain {
         blastRim: { value: this.blastRimTexture },
         mapSize: { value: new THREE.Vector2(this.canvas.width, this.canvas.height) },
         useCustomTexture: { value: this.hasCustomImage ? 1.0 : 0.0 },
+        edgeColorCorrection: { value: 0.0 },
+        edgeSmoothing: { value: 1.0 },
+        sharpenStrength: { value: 0.0 },
         lightPos: { value: new THREE.Vector2(MAP.width * .5, MAP.height * .78) },
         lightHeight: { value: 8.0 },
         lightRadius: { value: 16.0 },
@@ -104,6 +164,9 @@ export class Terrain {
         uniform sampler2D blastRim;
         uniform vec2 mapSize;
         uniform float useCustomTexture;
+        uniform float edgeColorCorrection;
+        uniform float edgeSmoothing;
+        uniform float sharpenStrength;
         uniform vec2 lightPos;
         uniform float lightHeight;
         uniform float lightRadius;
@@ -138,9 +201,30 @@ export class Terrain {
           vec2 px = 1.0 / mapSize;
           vec4 sampleCenter = texture2D(mask, vUv);
           vec4 colorCenter = texture2D(colorMap, vUv);
+          // Убираем чёрный ореол на краях PNG: цвет полупрозрачного пикселя
+          // подтягиваем из ближайшего непрозрачного участка по градиенту маски.
+          float alphaLeft = texture2D(mask, vUv - vec2(px.x, 0.0)).a;
+          float alphaRight = texture2D(mask, vUv + vec2(px.x, 0.0)).a;
+          float alphaDown = texture2D(mask, vUv - vec2(0.0, px.y)).a;
+          float alphaUp = texture2D(mask, vUv + vec2(0.0, px.y)).a;
+          vec2 alphaGradient = vec2(alphaRight - alphaLeft, alphaUp - alphaDown);
+          float alphaGradientLength = length(alphaGradient);
+          vec2 towardSolid = alphaGradient / max(alphaGradientLength, 0.0001);
+          vec3 edgeColor = texture2D(colorMap, vUv + towardSolid * px * 1.5).rgb;
+          vec3 customTextureColor = mix(colorCenter.rgb, edgeColor, clamp(alphaGradientLength * 1.5, 0.0, 1.0) * edgeColorCorrection);
+          if (useCustomTexture > 0.5 && sampleCenter.a > 0.99 && sharpenStrength > 0.0) {
+            vec3 colorNeighbors = (
+              texture2D(colorMap, vUv + vec2(px.x, 0.0)).rgb +
+              texture2D(colorMap, vUv - vec2(px.x, 0.0)).rgb +
+              texture2D(colorMap, vUv + vec2(0.0, px.y)).rgb +
+              texture2D(colorMap, vUv - vec2(0.0, px.y)).rgb
+            ) * 0.25;
+            customTextureColor = clamp(customTextureColor + (customTextureColor - colorNeighbors) * sharpenStrength, 0.0, 1.0);
+          }
 
-          if (sampleCenter.a < 0.4) discard;
-          float edgeAlpha = smoothstep(0.4, 0.7, sampleCenter.a);
+          if (sampleCenter.a < 0.01) discard;
+          float hardEdgeAlpha = step(0.5, sampleCenter.a);
+          float edgeAlpha = mix(hardEdgeAlpha, sampleCenter.a, edgeSmoothing);
 
           // Псевдорельеф из яркости соседних пикселей — аналог bump map из SVG-фильтра.
           vec3 normal = normalize(texture2D(normalMap, vUv).rgb * 2.0 - 1.0);
@@ -154,7 +238,7 @@ export class Terrain {
 
           if (useCustomTexture > 0.5) {
             // Берем оригинальные цвета картинки
-            finalColor = colorCenter.rgb;
+            finalColor = customTextureColor;
 
           } else {
             // Процедурный грунт для стандартного режима
