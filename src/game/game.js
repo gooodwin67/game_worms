@@ -277,7 +277,7 @@ export class Game {
     this.canvas = canvas; this.scene = new THREE.Scene();
     this.camera = new THREE.OrthographicCamera(-48, 48, 27, -27, .1, 200); this.camera.position.set(48, 27, 100);
     this.duckBlendQuality = { shadowStrength: 0.625, shadowScale: 1.6, shadowOffsetY: -0.15, saturation: 0.65, highlightSoftening: 0.3, surfaceTexture: true };
-    this.terrainQuality = { pixelRatio: 1, sharpen: 0, edgeCorrection: 0.5, edgeSmoothing: 0.75 };
+    this.terrainQuality = { pixelRatio: 1, sharpen: 0, edgeCorrection: 0.5, edgeCorrectionDay: 0.9, edgeCorrectionEnabled: true, edgeOffset: 1.5, edgeSmoothing: 0.75 };
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true }); this.renderer.setPixelRatio(this.terrainQuality.pixelRatio); this.renderer.outputColorSpace = THREE.SRGBColorSpace; this.renderer.setClearColor(0x071a2f, 1); this.renderer.autoClear = false;
     this.physicsDebugEnabled = false;
     this.physicsDebugGeometry = new THREE.BufferGeometry();
@@ -1785,7 +1785,10 @@ export class Game {
     const uniforms = this.terrain?.material?.uniforms;
     if (uniforms) {
       uniforms.sharpenStrength.value = this.terrainQuality.sharpen;
-      uniforms.edgeColorCorrection.value = this.terrainQuality.edgeCorrection;
+      const day = this.skyCycle?.value || 0;
+      const edgeCorrection = THREE.MathUtils.lerp(this.terrainQuality.edgeCorrection, this.terrainQuality.edgeCorrectionDay, day);
+      uniforms.edgeColorCorrection.value = this.terrainQuality.edgeCorrectionEnabled ? edgeCorrection : 0;
+      uniforms.edgeSampleOffset.value = this.terrainQuality.edgeOffset;
       uniforms.edgeSmoothing.value = this.terrainQuality.edgeSmoothing;
     }
     this.renderer.setPixelRatio(this.terrainQuality.pixelRatio);
@@ -2535,14 +2538,24 @@ export class Game {
       w.mesh.position.set(posX, posY, 0);
       if (w.contactShadow) {
         let groundY = -Infinity;
+        let shadowX = posX;
         if (w.alive && !w.invisible && this.duckBlendQuality.shadowStrength > 0) {
           // Один луч по центру может пройти в щель между пикселями/блоками,
           // хотя капсула игрока опирается на края. Проверяем ширину опоры.
-          for (const footOffset of [-.3, 0, .3]) {
+          let nearestGap = Infinity;
+          for (const footOffset of [0, -.3, .3]) {
             this.groundRay.origin.x = posX + footOffset;
             this.groundRay.origin.y = posY + .12;
             const hit = this.world.castRayAndGetNormal(this.groundRay, 12, true, undefined, undefined, w.collider, w.body, collider => !collider.isSensor() && collider.parent() === null);
-            if (hit?.normal?.y > .15) groundY = Math.max(groundY, this.groundRay.origin.y - hit.timeOfImpact);
+            if (hit?.normal?.y > .15) {
+              const candidateY = this.groundRay.origin.y - hit.timeOfImpact;
+              const candidateGap = Math.abs(posY - .76 - candidateY);
+              if (candidateGap < nearestGap) {
+                nearestGap = candidateGap;
+                groundY = candidateY;
+                shadowX = posX + footOffset;
+              }
+            }
           }
         }
         if (Number.isFinite(groundY)) {
@@ -2550,7 +2563,7 @@ export class Game {
           const opacityFactor = THREE.MathUtils.clamp(1 - footGap / 2.4, 0, 1);
           w.contactShadow.visible = opacityFactor > .01;
           w.contactShadow.material.opacity = this.duckBlendQuality.shadowStrength * opacityFactor;
-          w.contactShadow.position.set(posX, groundY + this.duckBlendQuality.shadowOffsetY, -.12);
+          w.contactShadow.position.set(shadowX, groundY + this.duckBlendQuality.shadowOffsetY, -.12);
         } else {
           w.contactShadow.visible = false;
         }
@@ -3013,6 +3026,11 @@ export class Game {
 
   updateSkyEnvironment(dt) {
     const day = this.skyCycle.update(dt);
+    const qualityUniforms = this.terrain?.material?.uniforms;
+    if (qualityUniforms) {
+      const edgeCorrection = THREE.MathUtils.lerp(this.terrainQuality.edgeCorrection, this.terrainQuality.edgeCorrectionDay, day);
+      qualityUniforms.edgeColorCorrection.value = this.terrainQuality.edgeCorrectionEnabled ? edgeCorrection : 0;
+    }
     const appearance = skyAppearance(day);
     const uniforms = this.backgroundMaterial.uniforms;
     uniforms.uDayMix.value = day;
@@ -4297,7 +4315,7 @@ export class Game {
     this.qualityHud.className = 'background-hud quality-hud';
     this.qualityHud.hidden = true;
     this.qualityHud.setAttribute('aria-label', 'Настройки качества карты');
-    this.qualityHud.innerHTML = '<div class="background-hud-heading"><strong>КАЧЕСТВО КАРТЫ</strong><button type="button" class="background-hud-close" aria-label="Закрыть настройки качества">×</button></div><p class="quality-hud-note">Настройки применяются сразу. Чёрный фон по краям по-прежнему вырезается.</p><label class="background-hud-range"><span>Резкость <output data-quality-value="sharpen">0%</output></span><input type="range" data-quality="sharpen" min="0" max="0.8" step="0.05" value="0"></label><label class="background-hud-range"><span>Коррекция цвета края <output data-quality-value="edgeCorrection">50%</output></span><input type="range" data-quality="edgeCorrection" min="0" max="1" step="0.05" value="0.5"></label><label class="background-hud-range"><span>Сглаживание кромки <output data-quality-value="edgeSmoothing">75%</output></span><input type="range" data-quality="edgeSmoothing" min="0" max="1" step="0.05" value="0.75"></label><label class="background-hud-range"><span>Разрешение рендера <output data-quality-value="pixelRatio">1.0×</output></span><input type="range" data-quality="pixelRatio" min="1" max="2" step="0.1" value="1"></label><h3 class="quality-hud-section">УТКИ В СЦЕНЕ</h3><label class="background-hud-check"><input type="checkbox" data-duck-texture-toggle checked><span>Матовая рисованная фактура</span></label><label class="background-hud-range"><span>Сила тени под лапами <output data-duck-quality-value="shadowStrength">63%</output></span><input type="range" data-duck-quality="shadowStrength" min="0" max="0.9" step="0.025" value="0.625"></label><label class="background-hud-range"><span>Размер тени <output data-duck-quality-value="shadowScale">1.6×</output></span><input type="range" data-duck-quality="shadowScale" min="0.5" max="1.8" step="0.05" value="1.6"></label><label class="background-hud-range"><span>Положение тени по Y <output data-duck-quality-value="shadowOffsetY">-0.15</output></span><input type="range" data-duck-quality="shadowOffsetY" min="-2" max="2" step="0.05" value="-0.15"></label><label class="background-hud-range"><span>Насыщенность цветов <output data-duck-quality-value="saturation">65%</output></span><input type="range" data-duck-quality="saturation" min="0.45" max="1" step="0.05" value="0.65"></label><label class="background-hud-range"><span>Смягчение бликов <output data-duck-quality-value="highlightSoftening">30%</output></span><input type="range" data-duck-quality="highlightSoftening" min="0" max="1" step="0.05" value="0.3"></label><button type="button" class="quality-hud-reset">Сбросить качество</button>';
+    this.qualityHud.innerHTML = '<div class="background-hud-heading"><strong>КАЧЕСТВО КАРТЫ</strong><button type="button" class="background-hud-close" aria-label="Закрыть настройки качества">×</button></div><p class="quality-hud-note">Настройки применяются сразу. Чёрный фон по краям по-прежнему вырезается.</p><label class="background-hud-range"><span>Резкость <output data-quality-value="sharpen">0%</output></span><input type="range" data-quality="sharpen" min="0" max="0.8" step="0.05" value="0"></label><label class="background-hud-range"><span>Коррекция кромки ночью <output data-quality-value="edgeCorrection">50%</output></span><input type="range" data-quality="edgeCorrection" min="0" max="1" step="0.05" value="0.5"></label><label class="background-hud-range"><span>Коррекция кромки днём <output data-quality-value="edgeCorrectionDay">90%</output></span><input type="range" data-quality="edgeCorrectionDay" min="0" max="1" step="0.05" value="0.9"></label><label class="background-hud-check"><input type="checkbox" data-quality-toggle="edgeCorrectionEnabled" checked><span>Коррекция цвета кромки</span></label><label class="background-hud-range"><span>Смещение кромки <output data-quality-value="edgeOffset">1.5 px</output></span><input type="range" data-quality="edgeOffset" min="0" max="4" step="0.1" value="1.5"></label><label class="background-hud-range"><span>Сглаживание кромки <output data-quality-value="edgeSmoothing">75%</output></span><input type="range" data-quality="edgeSmoothing" min="0" max="1" step="0.05" value="0.75"></label><label class="background-hud-range"><span>Разрешение рендера <output data-quality-value="pixelRatio">1.0×</output></span><input type="range" data-quality="pixelRatio" min="1" max="2" step="0.1" value="1"></label><h3 class="quality-hud-section">УТКИ В СЦЕНЕ</h3><label class="background-hud-check"><input type="checkbox" data-duck-texture-toggle checked><span>Матовая рисованная фактура</span></label><label class="background-hud-range"><span>Сила тени под лапами <output data-duck-quality-value="shadowStrength">63%</output></span><input type="range" data-duck-quality="shadowStrength" min="0" max="0.9" step="0.025" value="0.625"></label><label class="background-hud-range"><span>Размер тени <output data-duck-quality-value="shadowScale">1.6×</output></span><input type="range" data-duck-quality="shadowScale" min="0.5" max="1.8" step="0.05" value="1.6"></label><label class="background-hud-range"><span>Положение тени по Y <output data-duck-quality-value="shadowOffsetY">-0.15</output></span><input type="range" data-duck-quality="shadowOffsetY" min="-2" max="2" step="0.05" value="-0.15"></label><label class="background-hud-range"><span>Насыщенность цветов <output data-duck-quality-value="saturation">65%</output></span><input type="range" data-duck-quality="saturation" min="0.45" max="1" step="0.05" value="0.65"></label><label class="background-hud-range"><span>Смягчение бликов <output data-duck-quality-value="highlightSoftening">30%</output></span><input type="range" data-duck-quality="highlightSoftening" min="0" max="1" step="0.05" value="0.3"></label><button type="button" class="quality-hud-reset">Сбросить качество</button>';
     const closeQualityHud = () => {
       this.qualityHudCollapsed = true;
       this.qualityHud.hidden = true;
@@ -4319,6 +4337,9 @@ export class Game {
     const qualityDefaults = {
       sharpen: 0,
       edgeCorrection: 0.5,
+      edgeCorrectionDay: 0.9,
+      edgeCorrectionEnabled: true,
+      edgeOffset: 1.5,
       edgeSmoothing: 0.75,
       pixelRatio: 1
     };
@@ -4327,7 +4348,9 @@ export class Game {
       if (!output) return;
       output.textContent = property === 'pixelRatio'
         ? `${Number(value).toFixed(1)}×`
-        : `${Math.round(Number(value) / (property === 'sharpen' ? 0.8 : 1) * 100)}%`;
+        : property === 'edgeOffset'
+          ? `${Number(value).toFixed(1)} px`
+          : `${Math.round(Number(value) / (property === 'sharpen' ? 0.8 : 1) * 100)}%`;
     };
     this.qualityHud.querySelectorAll('[data-quality]').forEach(control => {
       const property = control.dataset.quality;
@@ -4339,7 +4362,12 @@ export class Game {
         this.applyTerrainQuality();
       });
     });
-    const duckQualityDefaults = { shadowStrength: 0.625, shadowScale: 1.6, shadowOffsetY: -0.15, saturation: 0.65, highlightSoftening: 0.3, surfaceTexture: true };
+    const edgeCorrectionToggle = this.qualityHud.querySelector('[data-quality-toggle="edgeCorrectionEnabled"]');
+    edgeCorrectionToggle.checked = this.terrainQuality.edgeCorrectionEnabled;
+    edgeCorrectionToggle.addEventListener('change', () => {
+      this.terrainQuality.edgeCorrectionEnabled = edgeCorrectionToggle.checked;
+      this.applyTerrainQuality();
+    });    const duckQualityDefaults = { shadowStrength: 0.625, shadowScale: 1.6, shadowOffsetY: -0.15, saturation: 0.65, highlightSoftening: 0.3, surfaceTexture: true };
     this.qualityHud.querySelectorAll('[data-duck-quality]').forEach(control => {
       const property = control.dataset.duckQuality;
       control.value = String(this.duckBlendQuality[property]);
@@ -4364,6 +4392,7 @@ export class Game {
       this.applyDuckBlendQuality();
     });    this.qualityHud.querySelector('.quality-hud-reset').addEventListener('click', () => {
       Object.assign(this.terrainQuality, qualityDefaults);
+      edgeCorrectionToggle.checked = qualityDefaults.edgeCorrectionEnabled;
       Object.assign(this.duckBlendQuality, duckQualityDefaults);
       duckTextureToggle.checked = duckQualityDefaults.surfaceTexture;
       this.qualityHud.querySelectorAll('[data-quality]').forEach(control => {

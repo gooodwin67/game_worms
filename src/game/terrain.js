@@ -135,6 +135,7 @@ export class Terrain {
         mapSize: { value: new THREE.Vector2(this.canvas.width, this.canvas.height) },
         useCustomTexture: { value: this.hasCustomImage ? 1.0 : 0.0 },
         edgeColorCorrection: { value: 0.0 },
+        edgeSampleOffset: { value: 1.5 },
         edgeSmoothing: { value: 1.0 },
         sharpenStrength: { value: 0.0 },
         lightPos: { value: new THREE.Vector2(MAP.width * .5, MAP.height * .78) },
@@ -165,6 +166,7 @@ export class Terrain {
         uniform vec2 mapSize;
         uniform float useCustomTexture;
         uniform float edgeColorCorrection;
+        uniform float edgeSampleOffset;
         uniform float edgeSmoothing;
         uniform float sharpenStrength;
         uniform vec2 lightPos;
@@ -210,7 +212,7 @@ export class Terrain {
           vec2 alphaGradient = vec2(alphaRight - alphaLeft, alphaUp - alphaDown);
           float alphaGradientLength = length(alphaGradient);
           vec2 towardSolid = alphaGradient / max(alphaGradientLength, 0.0001);
-          vec3 edgeColor = texture2D(colorMap, vUv + towardSolid * px * 1.5).rgb;
+          vec3 edgeColor = texture2D(colorMap, vUv + towardSolid * px * edgeSampleOffset).rgb;
           vec3 customTextureColor = mix(colorCenter.rgb, edgeColor, clamp(alphaGradientLength * 1.5, 0.0, 1.0) * edgeColorCorrection);
           if (useCustomTexture > 0.5 && sampleCenter.a > 0.99 && sharpenStrength > 0.0) {
             vec3 colorNeighbors = (
